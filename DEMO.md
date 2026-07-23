@@ -139,12 +139,39 @@ re-authenticating" requirement.
 **5. Log out** — then click Dashboard and show it bounces straight back to
 Login.
 
-### Optional extras
+### Showing roles
 
-- **`/messages/`** — the bonus feature. Send a message over the DIDComm
-  connection created during issuance.
-- **Run `test_security.py` on camera** — showing a credential from another
-  issuer being rejected is more convincing than showing the happy path twice.
+Issue **two** credentials to the same wallet — one as Student, one as Faculty.
+They appear as visibly different cards, because each role has its own schema
+(`university_student_id` / `university_faculty_id`) and wallets name a card
+after its schema.
+
+Then log in with each in turn. The same login QR produces a different portal:
+
+| | Student | Faculty |
+|---|---|---|
+| Dashboard | enrolled courses, notices | courses taught, grading queue, staff tools |
+| Profile | Student ID, programme, year, credits | Employee ID, position, office, supervision |
+
+Nothing switches server-side. `role` is an attribute inside the credential,
+signed by the university and disclosed in the presentation.
+
+### Bonus: faculty ↔ student messaging
+
+`/messages/` is a directory, not a QR generator. Logged in as faculty you see
+the students the university has issued to; as a student you see the faculty.
+
+1. Pick a person → **Show QR**
+2. They scan it with their wallet — that forms a direct DIDComm connection
+   between the two of you, unrelated to credential issuance
+3. Type a message; it goes to that person only
+
+Both sides poll, so a reply appears without refreshing.
+
+### Also worth filming
+
+**Run `test_security.py` on camera.** Showing a credential from another issuer
+being *rejected* is more convincing than showing the happy path twice.
 
 ---
 

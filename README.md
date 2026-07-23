@@ -21,13 +21,13 @@ for the portal.
 
 | Requirement | Where it lives |
 |---|---|
-| Issue a Student ID VC (`student_name`, `student_id`, `department`, `email`) | [issue_start](portal/ssi/views.py) → [`_on_connection`](portal/ssi/views.py) |
+| Issue a Student ID / Faculty ID VC (`full_name`, `id_number`, `department`, `email`, `role`) | [issue_start](portal/ssi/views.py) → [`_on_connection`](portal/ssi/views.py) |
 | Student holds the credential in a wallet | Mobile wallet (or [run_holder.py](agent/run_holder.py) for testing) |
 | Login by scanning a QR proof-request | [login_page](portal/ssi/views.py) |
 | Backend verifies proof, then creates a session | [login_complete](portal/ssi/views.py) |
 | Two protected pages, no re-auth | [dashboard](portal/ssi/views.py), [profile](portal/ssi/views.py) |
 | Working logout | [logout_view](portal/ssi/views.py) |
-| **Bonus:** 1-to-1 DIDComm messaging | [messages_page](portal/ssi/views.py) |
+| **Bonus:** 1-to-1 DIDComm messaging (faculty ↔ student) | [messages_page](portal/ssi/views.py) |
 
 ---
 
@@ -66,8 +66,10 @@ ACA-Py's Admin API via a thin client in [portal/ssi/acapy.py](portal/ssi/acapy.p
 | | |
 |---|---|
 | Issuer DID | `WazjcnK7xmg2BwiGzStH1S` |
-| Schema | `WazjcnK7xmg2BwiGzStH1S:2:student_id_card:1.0` |
-| Credential definition | `WazjcnK7xmg2BwiGzStH1S:3:CL:3225245:university-portal` |
+| Student schema | `WazjcnK7xmg2BwiGzStH1S:2:university_student_id:1.0` |
+| Student cred-def | `WazjcnK7xmg2BwiGzStH1S:3:CL:3225339:university-portal` |
+| Faculty schema | `WazjcnK7xmg2BwiGzStH1S:2:university_faculty_id:1.0` |
+| Faculty cred-def | `WazjcnK7xmg2BwiGzStH1S:3:CL:3225341:university-portal` |
 
 ---
 
@@ -80,15 +82,28 @@ rather than a form the student fills in themselves.
    ([`create_proof_request`](portal/ssi/acapy.py)). Only a credential this university
    actually issued and signed can satisfy it.
 
-2. **All four attributes are requested as one group**, not four separate referents:
+2. **All attributes are requested as one group**, not one referent each:
 
    ```python
-   {"student_id_card": {"names": [...], "restrictions": [{"cred_def_id": ...}]}}
+   {"university_id": {"names": [...], "restrictions": [{"issuer_did": ...}]}}
    ```
 
    A group forces every attribute to come from the **same** credential. With separate
    referents a holder could legitimately satisfy each one from a different credential —
-   mixing a real name with someone else's student ID.
+   mixing a real name with someone else's ID number.
+
+   The restriction is on `issuer_did` rather than `cred_def_id` because the login must
+   accept *either* the Student ID or the Faculty ID. Listing one restriction per
+   cred-def is the obvious way to express that, and AnonCreds does treat a restriction
+   list as OR — but ACA-Py's holder-side auto-presentation cannot build a presentation
+   from it. Verified by experiment: one `cred_def_id` restriction verifies, two produce
+   *"referent did not produce any credentials"*.
+
+   `issuer_did` alone would also admit any other cred-def published under the same DID,
+   so [`from_allowed_cred_def`](portal/ssi/acapy.py) checks the presented credential
+   against the published list **after** verification. `scripts/test_security.py`
+   exercises exactly this: its impostor cred-def is issued under our own DID, so only
+   that server-side check rejects it.
 
 3. **The request is wrapped in a connectionless out-of-band invitation**, so scanning
    one QR is the whole interaction — no connection has to be set up first.
