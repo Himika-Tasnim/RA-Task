@@ -55,7 +55,7 @@ def main() -> int:
     print(json.dumps(data, indent=2))
     print(
         "\nThe agent derives this same DID from AGENT_SEED at startup, so there is "
-        "nothing to copy anywhere. You can now run agent/start_agent.ps1"
+        "nothing to copy anywhere. You can now run:  python agent/run_agent.py"
     )
     return 0
 

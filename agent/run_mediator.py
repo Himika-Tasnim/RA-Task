@@ -71,7 +71,13 @@ def build_args(host_ips: list) -> list:
         "--outbound-transport", "ws",
         "--endpoint", *endpoints,
 
-        "--admin", "0.0.0.0", admin_port,
+        # Admin API on loopback only. It is the most powerful interface here
+        # -- it can issue credentials, create DIDs and read the wallet -- and
+        # only the portal (same machine) calls it. Binding 0.0.0.0 exposed it
+        # to every device on the WiFi behind nothing but a shared key that
+        # ships as a demo default. The DIDComm transports below stay on
+        # 0.0.0.0 because the phone genuinely must reach those.
+        "--admin", "127.0.0.1", admin_port,
         "--admin-api-key", env("ACAPY_ADMIN_API_KEY", "demo-admin-api-key"),
 
         "--wallet-type", "askar",

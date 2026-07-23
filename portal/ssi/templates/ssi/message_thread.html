@@ -53,8 +53,7 @@
       {% if thread %}
         {% for m in thread %}
           <div style="margin:10px 0; text-align:{% if m.outgoing %}right{% else %}left{% endif %}">
-            <span style="display:inline-block; max-width:75%; padding:9px 13px; border-radius:12px;
-                  background:{% if m.outgoing %}#1d4ed8; color:#fff{% else %}#e2e8f0; color:#16202c{% endif %}">
+            <span class="bubble {% if m.outgoing %}out{% else %}in{% endif %}">
               {{ m.content }}
             </span>
             <div class="muted" style="font-size:12px">

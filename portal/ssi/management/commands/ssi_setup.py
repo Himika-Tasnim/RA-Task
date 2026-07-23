@@ -27,7 +27,7 @@ class Command(BaseCommand):
         except AcaPyError as exc:
             raise CommandError(
                 f"ACA-Py is not reachable at {client.base_url}.\n"
-                f"Start it first with:  .\\agent\\start_agent.ps1\n\n{exc}"
+                f"Start it first with:  python agent/run_agent.py\n\n{exc}"
             )
 
         did = client.public_did()
