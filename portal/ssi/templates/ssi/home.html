@@ -1,0 +1,54 @@
+{% extends "ssi/base.html" %}
+{% block title %}University Portal — Home{% endblock %}
+
+{% block content %}
+<h1>SSI University Portal</h1>
+<p class="sub">Log in with a Verifiable Credential instead of a password.</p>
+
+<div class="card">
+  <h2>System status</h2>
+  <table class="kv">
+    <tr>
+      <th>ACA-Py agent</th>
+      <td>
+        {% if agent_ok %}
+          <span class="pill ok">running</span>
+        {% else %}
+          <span class="pill err">unreachable</span>
+          <div class="muted" style="margin-top:6px">{{ agent_error }}</div>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Credential definition</th>
+      <td>
+        {% if artifacts %}
+          <span class="pill ok">published</span>
+          <div class="mono" style="margin-top:6px">{{ artifacts.cred_def_id }}</div>
+        {% else %}
+          <span class="pill wait">not published</span>
+          <div class="muted" style="margin-top:6px">
+            Run <code>python manage.py ssi_setup</code> once the agent is up.
+          </div>
+        {% endif %}
+      </td>
+    </tr>
+    {% if artifacts %}
+      <tr><th>Issuer DID</th><td class="mono">{{ artifacts.issuer_did }}</td></tr>
+      <tr><th>Schema</th><td class="mono">{{ artifacts.schema_id }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>How the demo runs</h2>
+  <ol class="steps">
+    <li>Registrar issues a <strong>Student ID</strong> credential &mdash; the student scans the QR with their wallet and accepts it.</li>
+    <li>Student opens <strong>Login</strong>, scans the proof-request QR, and presents the credential.</li>
+    <li>ACA-Py verifies the presentation against the credential definition above; the portal then creates a session.</li>
+    <li>Student browses <strong>Dashboard</strong> and <strong>Profile</strong> with no re-authentication, then logs out.</li>
+  </ol>
+  <a class="btn" href="{% url 'issue' %}">Issue a Student ID</a>
+  <a class="btn secondary" href="{% url 'login' %}">Log in with a credential</a>
+</div>
+{% endblock %}

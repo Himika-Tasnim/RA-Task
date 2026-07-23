@@ -1,0 +1,139 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}University Portal{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f5f6f8;
+      --card: #ffffff;
+      --ink: #16202c;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --brand: #1d4ed8;
+      --brand-dark: #1e3a8a;
+      --ok: #047857;
+      --ok-bg: #ecfdf5;
+      --warn: #b45309;
+      --warn-bg: #fffbeb;
+      --err: #b91c1c;
+      --err-bg: #fef2f2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    header.top {
+      background: var(--brand-dark); color: #fff;
+      padding: 0 24px; display: flex; align-items: center; gap: 28px;
+      flex-wrap: wrap;
+    }
+    header.top .brand {
+      font-weight: 700; font-size: 18px; padding: 16px 0; letter-spacing: .2px;
+    }
+    header.top nav { display: flex; gap: 4px; flex-wrap: wrap; }
+    header.top nav a {
+      color: #cbd5e1; text-decoration: none; padding: 16px 12px; font-size: 15px;
+      border-bottom: 3px solid transparent;
+    }
+    header.top nav a:hover { color: #fff; }
+    header.top nav a.active { color: #fff; border-bottom-color: #60a5fa; }
+    header.top .spacer { margin-left: auto; }
+    header.top .who { font-size: 14px; color: #cbd5e1; padding: 16px 0; }
+
+    main { max-width: 900px; margin: 32px auto; padding: 0 24px; }
+    h1 { font-size: 28px; margin: 0 0 6px; }
+    h2 { font-size: 19px; margin: 0 0 12px; }
+    .sub { color: var(--muted); margin: 0 0 26px; }
+
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+      padding: 24px; margin-bottom: 20px;
+    }
+    .card h2 { border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+
+    label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 5px; }
+    input[type=text], input[type=email], select, textarea {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--line);
+      border-radius: 8px; font-size: 15px; font-family: inherit; background: #fff;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: 2px solid var(--brand); outline-offset: -1px; border-color: var(--brand);
+    }
+    .btn {
+      display: inline-block; background: var(--brand); color: #fff; border: 0;
+      padding: 11px 20px; border-radius: 8px; font-size: 15px; font-weight: 600;
+      cursor: pointer; text-decoration: none; margin-top: 18px;
+    }
+    .btn:hover { background: var(--brand-dark); }
+    .btn.secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+    .btn.danger { background: var(--err); }
+
+    .qr {
+      text-align: center; padding: 20px; background: #fff;
+      border: 1px solid var(--line); border-radius: 12px;
+    }
+    .qr img { width: 260px; height: 260px; image-rendering: pixelated; }
+
+    table.kv { width: 100%; border-collapse: collapse; }
+    table.kv th, table.kv td {
+      text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line);
+      font-size: 15px; vertical-align: top;
+    }
+    table.kv th { width: 190px; color: var(--muted); font-weight: 600; }
+
+    .alert { padding: 12px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 15px; }
+    .alert.success { background: var(--ok-bg); color: var(--ok); }
+    .alert.error   { background: var(--err-bg); color: var(--err); }
+    .alert.info, .alert.warning { background: var(--warn-bg); color: var(--warn); }
+
+    .pill {
+      display: inline-block; padding: 3px 10px; border-radius: 999px;
+      font-size: 13px; font-weight: 600;
+    }
+    .pill.ok   { background: var(--ok-bg);  color: var(--ok); }
+    .pill.wait { background: var(--warn-bg); color: var(--warn); }
+    .pill.err  { background: var(--err-bg); color: var(--err); }
+
+    code, .mono {
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 13px; word-break: break-all;
+    }
+    .steps { padding-left: 20px; color: var(--muted); font-size: 15px; }
+    .steps li { margin: 7px 0; }
+    .muted { color: var(--muted); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">&#127891; Demo University</div>
+    <nav>
+      <a href="{% url 'home' %}"    class="{% if request.resolver_match.url_name == 'home' %}active{% endif %}">Home</a>
+      <a href="{% url 'issue' %}"   class="{% if 'issue' in request.resolver_match.url_name %}active{% endif %}">Issue Credential</a>
+      {% if request.session.student %}
+        <a href="{% url 'dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Dashboard</a>
+        <a href="{% url 'profile' %}"   class="{% if request.resolver_match.url_name == 'profile' %}active{% endif %}">Profile</a>
+        <a href="{% url 'messages' %}"  class="{% if request.resolver_match.url_name == 'messages' %}active{% endif %}">Messages</a>
+      {% endif %}
+    </nav>
+    <div class="spacer"></div>
+    {% if request.session.student %}
+      <div class="who">{{ request.session.student.student_name }}</div>
+      <nav><a href="{% url 'logout' %}">Logout</a></nav>
+    {% else %}
+      <nav><a href="{% url 'login' %}" class="{% if request.resolver_match.url_name == 'login' %}active{% endif %}">Login</a></nav>
+    {% endif %}
+  </header>
+
+  <main>
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert {{ message.tags }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

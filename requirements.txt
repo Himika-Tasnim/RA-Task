@@ -1,0 +1,9 @@
+# ACA-Py 0.12.x is the last line that supports Python 3.9.
+# (The 1.x rename `acapy-agent` requires Python 3.12+.)
+aries-cloudagent[askar,indy]==0.12.8
+
+# Portal
+django==4.2.16
+requests>=2.31
+python-dotenv>=1.0
+qrcode[pil]>=7.4

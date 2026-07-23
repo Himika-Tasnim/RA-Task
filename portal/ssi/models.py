@@ -1,0 +1,125 @@
+import uuid
+
+from django.db import models
+
+
+def short_token() -> str:
+    """Short opaque id used in QR-friendly invitation URLs."""
+    return uuid.uuid4().hex[:12]
+
+
+class LedgerArtifacts(models.Model):
+    """
+    The schema and credential definition published to the ledger.
+
+    Written once by `manage.py ssi_setup` and read by both the issuance and the
+    login flows, so the portal doesn't have to re-derive these ids.
+    """
+
+    schema_id = models.CharField(max_length=255)
+    cred_def_id = models.CharField(max_length=255)
+    issuer_did = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = "Ledger artifacts"
+
+    def __str__(self) -> str:
+        return self.cred_def_id
+
+    @classmethod
+    def current(cls):
+        return cls.objects.order_by("-created_at").first()
+
+
+class IssuanceRequest(models.Model):
+    """
+    One student's credential being issued.
+
+    Created when the registrar submits the form; we then wait for the student
+    to scan the QR. The connection webhook matches back to this row via
+    `invitation_msg_id`, at which point the credential is offered automatically.
+    """
+
+    STATE_AWAITING_SCAN = "awaiting_scan"
+    STATE_CONNECTED = "connected"
+    STATE_OFFERED = "offered"
+    STATE_ISSUED = "issued"
+    STATE_ERROR = "error"
+
+    student_name = models.CharField(max_length=120)
+    student_id = models.CharField(max_length=60)
+    department = models.CharField(max_length=120)
+    email = models.EmailField()
+
+    invitation_msg_id = models.CharField(max_length=120, db_index=True)
+    invitation_url = models.TextField(blank=True)
+    # Stored so the short URL below can hand the invitation to a wallet that
+    # fetches it instead of decoding a large QR.
+    invitation_json = models.JSONField(default=dict, blank=True)
+    token = models.CharField(max_length=32, default=short_token, db_index=True)
+    connection_id = models.CharField(max_length=120, blank=True, db_index=True)
+    cred_ex_id = models.CharField(max_length=120, blank=True, db_index=True)
+
+    state = models.CharField(max_length=32, default=STATE_AWAITING_SCAN)
+    detail = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.student_name} ({self.student_id}) - {self.state}"
+
+    def attributes(self):
+        return {
+            "student_name": self.student_name,
+            "student_id": self.student_id,
+            "department": self.department,
+            "email": self.email,
+        }
+
+
+class LoginSession(models.Model):
+    """
+    One attempted login via proof presentation.
+
+    The browser polls this row while the student presents their credential in
+    the wallet. Only when ACA-Py reports the presentation as cryptographically
+    verified do we let the view create a Django session.
+    """
+
+    STATE_PENDING = "pending"
+    STATE_VERIFIED = "verified"
+    STATE_FAILED = "failed"
+
+    pres_ex_id = models.CharField(max_length=120, unique=True, db_index=True)
+    invitation_url = models.TextField(blank=True)
+    invitation_json = models.JSONField(default=dict, blank=True)
+    token = models.CharField(max_length=32, default=short_token, db_index=True)
+    state = models.CharField(max_length=32, default=STATE_PENDING)
+    verified = models.BooleanField(default=False)
+    attributes = models.JSONField(default=dict, blank=True)
+    detail = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.pres_ex_id} - {self.state}"
+
+
+class BasicMessage(models.Model):
+    """
+    Bonus feature: 1-to-1 DIDComm messages over an established connection.
+
+    Both directions land here -- outgoing ones when we call ACA-Py, incoming
+    ones from the `basicmessages` webhook.
+    """
+
+    connection_id = models.CharField(max_length=120, db_index=True)
+    content = models.TextField()
+    outgoing = models.BooleanField(default=False)
+    sent_time = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sent_time"]
+
+    def __str__(self) -> str:
+        direction = "->" if self.outgoing else "<-"
+        return f"{direction} {self.content[:40]}"

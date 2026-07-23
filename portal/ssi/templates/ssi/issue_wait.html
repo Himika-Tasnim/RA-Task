@@ -1,0 +1,91 @@
+{% extends "ssi/base.html" %}
+{% block title %}Scan to receive your credential{% endblock %}
+
+{% block content %}
+<h1>Scan to receive your Student ID</h1>
+<p class="sub">
+  Issuing to <strong>{{ req.student_name }}</strong> ({{ req.student_id }})
+</p>
+
+<div class="card">
+  <div class="qr">
+    <img id="qr-short" src="{{ qr_short }}" alt="Connection invitation QR code">
+    <img id="qr-full"  src="{{ qr_full }}"  alt="Connection invitation QR code (full)" style="display:none">
+    <div class="muted" style="margin-top:10px">
+      <span id="qr-mode">Compact QR</span> &middot;
+      <a href="#" id="qr-toggle">wallet didn't recognise it? switch</a>
+    </div>
+  </div>
+
+  <div style="margin-top:18px">
+    <strong>Status:</strong>
+    <span id="state" class="pill wait">waiting for scan…</span>
+    <div class="muted" id="detail" style="margin-top:6px"></div>
+  </div>
+
+  <ol class="steps" style="margin-top:18px">
+    <li>Open your wallet app and scan this code.</li>
+    <li>Accept the connection with <em>Demo University</em>.</li>
+    <li>A credential offer arrives automatically — tap <em>Accept</em>.</li>
+  </ol>
+
+  <details style="margin-top:10px">
+    <summary class="muted">Can't scan? Show the invitation URLs</summary>
+    <p class="muted" style="margin-top:8px">Short form:</p>
+    <p class="mono">{{ short_url }}</p>
+    <p class="muted">Full form:</p>
+    <p class="mono">{{ req.invitation_url }}</p>
+  </details>
+</div>
+
+<div class="card" id="done-card" style="display:none">
+  <h2>&#9989; Credential issued</h2>
+  <p>The Student ID credential is now held in the student's wallet.</p>
+  <a class="btn" href="{% url 'login' %}">Continue to login</a>
+  <a class="btn secondary" href="{% url 'issue' %}">Issue another</a>
+</div>
+
+<script>
+  // Compact QR (a short URL the wallet fetches) vs full QR (whole invitation
+  // inline). Compact scans far more easily; full works with wallets that don't
+  // implement out-of-band URL shortening.
+  document.getElementById("qr-toggle").addEventListener("click", (e) => {
+    e.preventDefault();
+    const short = document.getElementById("qr-short");
+    const full  = document.getElementById("qr-full");
+    const showingShort = short.style.display !== "none";
+    short.style.display = showingShort ? "none" : "";
+    full.style.display  = showingShort ? "" : "none";
+    document.getElementById("qr-mode").textContent =
+      showingShort ? "Full QR" : "Compact QR";
+  });
+
+  const LABELS = {
+    awaiting_scan: ["waiting for scan…", "wait"],
+    connected:     ["wallet connected", "ok"],
+    offered:       ["credential offered — accept it in the wallet", "wait"],
+    issued:        ["credential issued", "ok"],
+    error:         ["error", "err"]
+  };
+
+  async function poll() {
+    try {
+      const res  = await fetch("{% url 'issue_status' req.pk %}");
+      const data = await res.json();
+      const [text, cls] = LABELS[data.state] || [data.state, "wait"];
+
+      const el = document.getElementById("state");
+      el.textContent = text;
+      el.className = "pill " + cls;
+      document.getElementById("detail").textContent = data.detail || "";
+
+      if (data.done) {
+        document.getElementById("done-card").style.display = "block";
+        return;                       // stop polling
+      }
+    } catch (e) { /* agent restarting — keep trying */ }
+    setTimeout(poll, 2000);
+  }
+  poll();
+</script>
+{% endblock %}

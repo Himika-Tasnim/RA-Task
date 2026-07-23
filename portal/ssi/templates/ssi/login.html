@@ -1,0 +1,83 @@
+{% extends "ssi/base.html" %}
+{% block title %}Login — University Portal{% endblock %}
+
+{% block content %}
+<h1>Log in with your Student ID</h1>
+<p class="sub">No password. Scan the code and present your credential.</p>
+
+{% if not artifacts %}
+  <div class="alert error">
+    No credential definition is published yet. Start the ACA-Py agent, then run
+    <code>python manage.py ssi_setup</code>.
+  </div>
+{% elif login_session %}
+<div class="card">
+  <div class="qr">
+    <img id="qr-short" src="{{ qr_short }}" alt="Proof request QR code">
+    <img id="qr-full"  src="{{ qr_full }}"  alt="Proof request QR code (full)" style="display:none">
+    <div class="muted" style="margin-top:10px">
+      <span id="qr-mode">Compact QR</span> &middot;
+      <a href="#" id="qr-toggle">wallet didn't recognise it? switch</a>
+    </div>
+  </div>
+
+  <div style="margin-top:18px">
+    <strong>Status:</strong>
+    <span id="state" class="pill wait">waiting for your presentation…</span>
+    <div class="muted" id="detail" style="margin-top:6px"></div>
+  </div>
+
+  <ol class="steps" style="margin-top:18px">
+    <li>Scan this code with the wallet holding your Student ID.</li>
+    <li>Review what the portal is asking for, then tap <em>Share</em>.</li>
+    <li>You'll be signed in as soon as the proof verifies.</li>
+  </ol>
+
+  <details style="margin-top:10px">
+    <summary class="muted">Can't scan? Show the proof-request URLs</summary>
+    <p class="muted" style="margin-top:8px">Short form:</p>
+    <p class="mono">{{ short_url }}</p>
+    <p class="muted">Full form:</p>
+    <p class="mono">{{ login_session.invitation_url }}</p>
+  </details>
+</div>
+
+<script>
+  document.getElementById("qr-toggle").addEventListener("click", (e) => {
+    e.preventDefault();
+    const short = document.getElementById("qr-short");
+    const full  = document.getElementById("qr-full");
+    const showingShort = short.style.display !== "none";
+    short.style.display = showingShort ? "none" : "";
+    full.style.display  = showingShort ? "" : "none";
+    document.getElementById("qr-mode").textContent =
+      showingShort ? "Full QR" : "Compact QR";
+  });
+
+  async function poll() {
+    try {
+      const res  = await fetch("{% url 'login_status' login_session.pres_ex_id %}");
+      const data = await res.json();
+
+      if (data.verified) {
+        const el = document.getElementById("state");
+        el.textContent = "verified — signing you in…";
+        el.className = "pill ok";
+        window.location = "{% url 'login_complete' login_session.pres_ex_id %}";
+        return;
+      }
+      if (data.state === "failed") {
+        const el = document.getElementById("state");
+        el.textContent = "presentation rejected";
+        el.className = "pill err";
+        document.getElementById("detail").textContent =
+          (data.detail || "") + " Reload this page to try again.";
+        return;
+      }
+    } catch (e) { /* keep trying */ }
+    setTimeout(poll, 2000);
+  }
+  poll();
+</script>
+{% endif %}
+{% endblock %}

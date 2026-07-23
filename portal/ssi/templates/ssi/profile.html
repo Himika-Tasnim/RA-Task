@@ -1,0 +1,39 @@
+{% extends "ssi/base.html" %}
+{% block title %}Profile — University Portal{% endblock %}
+
+{% block content %}
+<h1>Profile</h1>
+<p class="sub">Second protected page — same session, no re-authentication.</p>
+
+<div class="card">
+  <h2>Attributes from your credential</h2>
+  <p class="muted" style="margin-top:-4px">
+    These values were disclosed by your wallet in the verified presentation.
+    The portal never stored them beforehand.
+  </p>
+  <table class="kv">
+    <tr><th>Name</th><td>{{ student.student_name }}</td></tr>
+    <tr><th>Student ID</th><td>{{ student.student_id }}</td></tr>
+    <tr><th>Department</th><td>{{ student.department }}</td></tr>
+    <tr><th>Email</th><td>{{ student.email }}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>How you were authenticated</h2>
+  <table class="kv">
+    <tr><th>Method</th><td>AnonCreds verifiable presentation over DIDComm</td></tr>
+    <tr><th>Verified by</th><td>ACA-Py 0.12.8</td></tr>
+    {% if artifacts %}
+      <tr><th>Trusted issuer DID</th><td class="mono">{{ artifacts.issuer_did }}</td></tr>
+      <tr><th>Credential definition</th><td class="mono">{{ artifacts.cred_def_id }}</td></tr>
+    {% endif %}
+    <tr><th>Presentation exchange</th><td class="mono">{{ pres_ex_id }}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <a class="btn" href="{% url 'dashboard' %}">Back to Dashboard</a>
+  <a class="btn danger" href="{% url 'logout' %}">Logout</a>
+</div>
+{% endblock %}

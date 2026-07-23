@@ -1,0 +1,36 @@
+{% extends "ssi/base.html" %}
+{% block title %}Issue Student ID{% endblock %}
+
+{% block content %}
+<h1>Issue a Student ID credential</h1>
+<p class="sub">Registrar view — fills the credential, then the student scans to receive it.</p>
+
+{% if not artifacts %}
+  <div class="alert error">
+    No credential definition is published yet. Start the ACA-Py agent, then run
+    <code>python manage.py ssi_setup</code>.
+  </div>
+{% endif %}
+
+<div class="card">
+  <h2>Student details</h2>
+  <form method="post" action="{% url 'issue_start' %}">
+    {% csrf_token %}
+    <label for="student_name">Full name</label>
+    <input type="text" id="student_name" name="student_name" placeholder="Ayesha Rahman" required>
+
+    <label for="student_id">Student ID</label>
+    <input type="text" id="student_id" name="student_id" placeholder="STU-2024-0142" required>
+
+    <label for="department">Department</label>
+    <input type="text" id="department" name="department" placeholder="Computer Science" required>
+
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" placeholder="ayesha@demo-university.edu" required>
+
+    <button class="btn" type="submit" {% if not artifacts %}disabled{% endif %}>
+      Generate invitation QR
+    </button>
+  </form>
+</div>
+{% endblock %}
