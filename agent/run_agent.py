@@ -119,8 +119,11 @@ def build_args(host_ips: list) -> list:
         "--seed", env("AGENT_SEED"),
         "--public-invites",
 
-        # Push protocol state changes to the portal.
-        "--webhook-url", f"http://127.0.0.1:{portal_port}/webhooks",
+        # Push protocol state changes to the portal. The part after '#' is sent
+        # as an x-api-key header on every webhook; the portal rejects requests
+        # without it, so the endpoint cannot be used to forge a login.
+        "--webhook-url",
+        f"http://127.0.0.1:{portal_port}/webhooks#{env('WEBHOOK_API_KEY', 'demo-webhook-api-key')}",
 
         # Automation, so the demo is one tap in the wallet at each step.
         "--auto-accept-invites",

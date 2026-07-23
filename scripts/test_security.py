@@ -282,6 +282,141 @@ def test_logout_destroys_session():
     check("starts logged out", "/login" in r.url)
 
 
+def _forged_webhook_body(pres_ex_id: str) -> dict:
+    """A webhook that claims a verified presentation which never happened."""
+    return {
+        "pres_ex_id": pres_ex_id,
+        "state": "done",
+        "verified": "true",
+        "by_format": {
+            "pres": {
+                "indy": {
+                    "identifiers": [
+                        {"cred_def_id": "WazjcnK7xmg2BwiGzStH1S:3:CL:3225339:university-portal"}
+                    ],
+                    "requested_proof": {
+                        "revealed_attr_groups": {
+                            "university_id": {
+                                "values": {
+                                    "full_name": {"raw": "Mallory Impostor"},
+                                    "id_number": {"raw": "HACK-0001"},
+                                    "department": {"raw": "None"},
+                                    "email": {"raw": "mallory@example.com"},
+                                    "role": {"raw": "faculty"},
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+
+def test_webhook_forgery():
+    """
+    The webhook endpoint is a write path into login state.
+
+    Before this was fixed it was unauthenticated, and pres_ex_id is printed
+    into the public login page -- so anyone who could reach the portal could
+    POST a fabricated "verified" event and log straight in as a faculty member.
+    """
+    section(6, "Forged ACA-Py webhook (authentication bypass)")
+    s = requests.Session()
+    page = s.get(f"{PORTAL}/login/", timeout=20)
+    m = re.search(r"/login/status/([0-9a-f-]{36})/", page.text)
+    if not m:
+        check("could not create a proof request", False)
+        return
+    pres_ex_id = m.group(1)
+
+    body = _forged_webhook_body(pres_ex_id)
+    url = f"{PORTAL}/webhooks/topic/present_proof_v2_0/"
+
+    unauth = requests.post(url, json=body, timeout=20)
+    check(
+        "webhook without the shared key is rejected",
+        unauth.status_code == 401,
+        f"HTTP {unauth.status_code}",
+    )
+
+    # Even holding the key must not be enough: the handler re-reads the record
+    # from ACA-Py rather than believing the payload.
+    withkey = requests.post(
+        url, json=body, headers={"x-api-key": os.getenv("WEBHOOK_API_KEY", "demo-webhook-api-key")},
+        timeout=20,
+    )
+    status = s.get(f"{PORTAL}/login/status/{pres_ex_id}/", timeout=15).json()
+    check(
+        "a forged payload cannot mark a login verified",
+        not status.get("verified"),
+        f"webhook HTTP {withkey.status_code}, session verified={status.get('verified')}",
+    )
+
+    r = s.get(f"{PORTAL}/login/complete/{pres_ex_id}/", timeout=20)
+    check("forged login cannot reach the dashboard", "/dashboard" not in r.url)
+
+
+def test_login_replay_and_binding():
+    """
+    A verified login belongs to one browser and may be used once.
+
+    pres_ex_id is public, so a second browser must not be able to complete
+    someone else's login, and the same proof must not be replayable.
+    """
+    section(7, "Login session binding and replay")
+    victim = requests.Session()
+    page = victim.get(f"{PORTAL}/login/", timeout=20)
+    m = re.search(r"/login/status/([0-9a-f-]{36})/", page.text)
+    tok = re.search(r"/i/([a-f0-9]{12})/", page.text)
+    if not (m and tok):
+        check("built a login proof request", False)
+        return
+    pres_ex_id = m.group(1)
+
+    invitation = requests.get(
+        f"{PORTAL}/i/{tok.group(1)}/", headers={"Accept": "application/json"}, timeout=20
+    ).json()
+    requests.post(
+        f"{HOLDER}/out-of-band/receive-invitation",
+        headers=H, params={"auto_accept": "true"}, json=invitation, timeout=40,
+    )
+    verified = wait_for(
+        lambda: victim.get(f"{PORTAL}/login/status/{pres_ex_id}/", timeout=15).json().get("verified"),
+        "verification", timeout=60,
+    )
+    if not verified:
+        check("presentation verified for the binding test", False)
+        return
+
+    # A different browser tries to claim the freshly verified login.
+    attacker = requests.Session()
+    attacker.get(f"{PORTAL}/", timeout=15)  # get its own session cookie
+    r = attacker.get(f"{PORTAL}/login/complete/{pres_ex_id}/", timeout=20)
+    check(
+        "another browser cannot claim the login",
+        "/dashboard" not in r.url,
+        f"landed on {r.url}",
+    )
+
+    # The rightful browser completes it, then tries again.
+    ok = victim.get(f"{PORTAL}/login/complete/{pres_ex_id}/", timeout=20)
+    check("the requesting browser can complete it", "/dashboard" in ok.url)
+
+    # Log out, then try to get back in by replaying the same proof rather than
+    # presenting again. Both guards should bite: the session is marked consumed,
+    # and logging out issued a new browser key.
+    victim.get(f"{PORTAL}/logout/", timeout=15)
+    replay = victim.get(f"{PORTAL}/login/complete/{pres_ex_id}/", timeout=20)
+    check(
+        "the same proof cannot be replayed after logout",
+        "/dashboard" not in replay.url,
+        f"landed on {replay.url}",
+    )
+    still_out = victim.get(f"{PORTAL}/dashboard/", timeout=15)
+    check("dashboard still refused after the replay attempt", "/login" in still_out.url)
+
+
 def main():
     print("=" * 68)
     print("  SSI University Portal -- security / negative tests")
@@ -298,6 +433,8 @@ def main():
     test_unanswered_proof_replay()
     test_wrong_issuer()
     test_logout_destroys_session()
+    test_webhook_forgery()
+    test_login_replay_and_binding()
 
     print("\n" + "=" * 68)
     print(f"  {passed} passed, {failed} failed")

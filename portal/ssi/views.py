@@ -26,6 +26,8 @@ from django.conf import settings
 from django.contrib import messages as flash
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
+from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
@@ -97,6 +99,16 @@ def ssi_login_required(view):
         return view(request, *args, **kwargs)
 
     return wrapper
+
+
+def _my_chats(me):
+    """
+    Conversations belonging to the logged-in member only.
+
+    Threads are keyed by the id_number inside the presented credential, so one
+    member cannot read another pair's messages by guessing a person id.
+    """
+    return ChatInvitation.objects.filter(owner_id_number=me.get("id_number", ""))
 
 
 def _artifacts_or_redirect(request):
@@ -248,10 +260,15 @@ def login_page(request):
         flash.error(request, f"Could not build the login request: {exc}")
         return render(request, "ssi/login.html", {"artifacts": artifacts})
 
+    # Give this browser a session key first, so the login can be tied to it.
+    if not request.session.session_key:
+        request.session.create()
+
     session = LoginSession.objects.create(
         pres_ex_id=pres_ex_id,
         invitation_url=invitation.get("invitation_url", ""),
         invitation_json=invitation.get("invitation", {}),
+        browser_key=request.session.session_key or "",
     )
     short_url = short_invitation_url(session.token)
 
@@ -309,12 +326,33 @@ def login_complete(request, pres_ex_id):
         flash.error(request, "That presentation was not verified. Please try again.")
         return redirect("login")
 
-    request.session[SESSION_KEY] = session.attributes
+    # Only the browser that asked for this proof may complete it. pres_ex_id is
+    # visible in the public login page, so without this anyone who saw it could
+    # claim the session once the real holder presented.
+    if session.browser_key and session.browser_key != request.session.session_key:
+        log.warning("login_complete from a different browser for %s", pres_ex_id)
+        flash.error(request, "This login request belongs to a different browser.")
+        return redirect("login")
+
+    # One presentation, one login. Stops the same proof being replayed.
+    if session.consumed_at:
+        flash.error(request, "That login request has already been used.")
+        return redirect("login")
+
+    attributes = session.attributes
+    session.consumed_at = timezone.now()
+    session.save(update_fields=["consumed_at"])
+
+    # New session id now that privileges change, so a session fixed before
+    # login cannot be reused after it.
+    request.session.cycle_key()
+
+    request.session[SESSION_KEY] = attributes
     request.session["pres_ex_id"] = pres_ex_id
     request.session.set_expiry(settings.SESSION_COOKIE_AGE)
 
     flash.success(
-        request, f"Welcome, {session.attributes.get('full_name', 'there')}!"
+        request, f"Welcome, {attributes.get('full_name', 'there')}!"
     )
     return redirect("dashboard")
 
@@ -438,7 +476,9 @@ def messages_page(request):
     for person in IssuanceRequest.objects.filter(
         role=other_role, state=IssuanceRequest.STATE_ISSUED
     ).order_by("full_name"):
-        chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
+        chat = _my_chats(me).filter(
+            counterparty=person, state=ChatInvitation.STATE_CONNECTED
+        ).first()
         directory.append(
             {
                 "person": person,
@@ -469,8 +509,9 @@ def messages_thread(request, pk):
     me = request.session[SESSION_KEY]
     person = get_object_or_404(IssuanceRequest, pk=pk)
 
-    chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
-    pending = person.chats.filter(state=ChatInvitation.STATE_AWAITING_SCAN).first()
+    mine = _my_chats(me).filter(counterparty=person)
+    chat = mine.filter(state=ChatInvitation.STATE_CONNECTED).first()
+    pending = mine.filter(state=ChatInvitation.STATE_AWAITING_SCAN).first()
 
     context = {
         "member": me,
@@ -495,11 +536,10 @@ def messages_start(request, pk):
     me = request.session[SESSION_KEY]
     person = get_object_or_404(IssuanceRequest, pk=pk)
 
-    if person.chats.filter(state=ChatInvitation.STATE_CONNECTED).exists():
-        return redirect("messages_thread", pk=pk)
-
-    existing = person.chats.filter(state=ChatInvitation.STATE_AWAITING_SCAN).first()
-    if existing:
+    mine = _my_chats(me).filter(counterparty=person)
+    if mine.filter(
+        state__in=(ChatInvitation.STATE_CONNECTED, ChatInvitation.STATE_AWAITING_SCAN)
+    ).exists():
         return redirect("messages_thread", pk=pk)
 
     try:
@@ -514,6 +554,7 @@ def messages_start(request, pk):
         label=person.full_name,
         counterparty=person,
         initiated_by_role=me.get("role", ""),
+        owner_id_number=me.get("id_number", ""),
         invitation_msg_id=invitation.get("invi_msg_id", ""),
         invitation_url=invitation.get("invitation_url", ""),
         invitation_json=invitation.get("invitation", {}),
@@ -525,7 +566,9 @@ def messages_start(request, pk):
 def messages_status(request, pk):
     """Polled while waiting for a scan, and for new incoming messages."""
     person = get_object_or_404(IssuanceRequest, pk=pk)
-    chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
+    chat = _my_chats(request.session[SESSION_KEY]).filter(
+        counterparty=person, state=ChatInvitation.STATE_CONNECTED
+    ).first()
     return JsonResponse(
         {
             "connected": bool(chat),
@@ -542,7 +585,9 @@ def messages_status(request, pk):
 @require_POST
 def messages_send(request, pk):
     person = get_object_or_404(IssuanceRequest, pk=pk)
-    chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
+    chat = _my_chats(request.session[SESSION_KEY]).filter(
+        counterparty=person, state=ChatInvitation.STATE_CONNECTED
+    ).first()
     content = request.POST.get("content", "").strip()
 
     if not chat:
@@ -568,9 +613,23 @@ def webhook(request, topic):
 
     This is what makes the demo feel automatic: the moment a student's wallet
     finishes connecting, we push the credential offer without anyone clicking.
+
+    SECURITY: this endpoint is a write path into login state, so it is
+    authenticated with a shared secret ACA-Py appends to its webhook URL as
+    `#<key>` and sends as x-api-key. Left open, anyone able to reach the portal
+    could POST a fabricated "presentation verified" event -- with the
+    pres_ex_id lifted straight out of the public login page -- and log in as
+    anyone they liked. `_on_presentation` additionally refuses to trust the
+    payload's own verification claim.
     """
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
+
+    if not constant_time_compare(
+        request.headers.get("x-api-key", ""), settings.WEBHOOK_API_KEY
+    ):
+        log.warning("rejected unauthenticated webhook from %s", request.META.get("REMOTE_ADDR"))
+        return JsonResponse({"error": "unauthorized"}, status=401)
 
     try:
         payload = json.loads(request.body or b"{}")
@@ -669,13 +728,29 @@ def _on_credential(payload: dict) -> None:
 
 
 def _on_presentation(payload: dict) -> None:
-    """Presentation arrived -- ACA-Py has already auto-verified it."""
+    """
+    A presentation exchange changed state.
+
+    The payload is treated purely as a *notification*: the authoritative record
+    is re-fetched from ACA-Py's admin API, which is itself protected by the
+    admin key. So even a webhook that somehow reached us with a forged
+    "verified": "true" cannot create a login -- the only thing that counts is
+    what the agent says when we ask it directly.
+    """
     pres_ex_id = payload.get("pres_ex_id")
     if not pres_ex_id:
         return
     session = LoginSession.objects.filter(pres_ex_id=pres_ex_id).first()
-    if session:
-        _apply_presentation(session, payload)
+    if not session:
+        return
+
+    try:
+        record = AcaPyClient().get_presentation_exchange(pres_ex_id)
+    except AcaPyError:
+        # Record already cleaned up, or the agent is briefly unreachable. The
+        # login page's poll will retry; never fall back to the payload.
+        return
+    _apply_presentation(session, record)
 
 
 def _on_basic_message(payload: dict) -> None:

@@ -112,6 +112,13 @@ class LoginSession(models.Model):
     invitation_url = models.TextField(blank=True)
     invitation_json = models.JSONField(default=dict, blank=True)
     token = models.CharField(max_length=32, default=short_token, db_index=True)
+
+    # Bound to the browser that requested the login, and usable once.
+    # pres_ex_id appears in the public login page's polling URL, so without
+    # these anyone who observed it could complete the login in their own
+    # browser after the real holder presented -- stealing the session.
+    browser_key = models.CharField(max_length=64, blank=True, db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
     state = models.CharField(max_length=32, default=STATE_PENDING)
     verified = models.BooleanField(default=False)
     attributes = models.JSONField(default=dict, blank=True)
@@ -150,6 +157,9 @@ class ChatInvitation(models.Model):
         related_name="chats",
     )
     initiated_by_role = models.CharField(max_length=20, blank=True)
+    # Whose conversation this is, by the id_number in their credential. Without
+    # it any logged-in member could open any other pair's thread.
+    owner_id_number = models.CharField(max_length=60, blank=True, db_index=True)
     invitation_msg_id = models.CharField(max_length=120, db_index=True)
     invitation_url = models.TextField(blank=True)
     invitation_json = models.JSONField(default=dict, blank=True)

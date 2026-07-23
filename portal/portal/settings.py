@@ -109,6 +109,13 @@ PORTAL_PUBLIC_BASE = f"http://{AGENT_HOST_IP}:{os.getenv('PORTAL_PORT', '8000')}
 ACAPY_ADMIN_URL = f"http://127.0.0.1:{os.getenv('AGENT_ADMIN_PORT', '8021')}"
 ACAPY_ADMIN_API_KEY = os.getenv("ACAPY_ADMIN_API_KEY", "demo-admin-api-key")
 
+# Shared secret ACA-Py sends with every webhook, configured as
+# `--webhook-url <url>#<key>`. Without it the webhook endpoint is an
+# unauthenticated write path into the login state: anyone able to reach the
+# portal could POST a fabricated "presentation verified" event and log in as
+# anybody. Requests without a matching x-api-key are rejected.
+WEBHOOK_API_KEY = os.getenv("WEBHOOK_API_KEY", "demo-webhook-api-key")
+
 # Student ID credential definition
 ROLE_STUDENT = "student"
 ROLE_FACULTY = "faculty"
