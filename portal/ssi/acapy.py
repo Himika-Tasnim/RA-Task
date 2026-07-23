@@ -104,7 +104,9 @@ class AcaPyClient:
             "tag": tag,
             "support_revocation": False,
         }
-        result = self.post("/credential-definitions", payload)
+        # Generating CL keys is CPU-bound and regularly outruns the 30s default,
+        # especially with two cred-defs published back to back.
+        result = self.post("/credential-definitions", payload, timeout=300)
         return (
             result.get("credential_definition_id")
             or result["sent"]["credential_definition_id"]
@@ -155,7 +157,10 @@ class AcaPyClient:
 
     # -- proof / login -----------------------------------------------------
     def create_proof_request(
-        self, cred_def_id: str, attributes: List[str], name: str = "University Portal Login"
+        self,
+        issuer_did: str,
+        attributes: List[str],
+        name: str = "University Portal Login",
     ) -> Dict:
         """
         Build a *connectionless* proof request.
@@ -173,10 +178,23 @@ class AcaPyClient:
           - Size: one restriction block instead of four keeps the invitation
             small enough to fit in a QR code a phone can actually scan.
         """
+        # A single restriction on issuer_did, which matches BOTH the student and
+        # the faculty credential because the university issued both.
+        #
+        # Listing one restriction per cred-def would be the obvious way to say
+        # "either of these", and AnonCreds does treat a restriction list as OR,
+        # but ACA-Py's holder-side auto-presentation cannot build a presentation
+        # from it -- verified by experiment: one cred_def_id restriction
+        # verifies, two produce "referent did not produce any credentials".
+        #
+        # issuer_did alone is looser than we want, since we can publish more
+        # than one cred-def under our own DID. `verify_cred_defs()` closes that
+        # gap by checking the presented cred-def against the allowed list after
+        # verification.
         requested_attributes = {
-            "student_id_card": {
+            "university_id": {
                 "names": list(attributes),
-                "restrictions": [{"cred_def_id": cred_def_id}],
+                "restrictions": [{"issuer_did": issuer_did}],
             }
         }
         payload = {
@@ -256,6 +274,29 @@ def revealed_attributes(pres_ex_record: Dict) -> Dict[str, str]:
         values.setdefault(referent, raw)
 
     return values
+
+
+def presented_cred_def_ids(pres_ex_record: Dict) -> List[str]:
+    """Which credential definitions the holder actually presented from."""
+    try:
+        identifiers = pres_ex_record["by_format"]["pres"]["indy"]["identifiers"]
+    except (KeyError, TypeError):
+        return []
+    return [i.get("cred_def_id", "") for i in identifiers if i.get("cred_def_id")]
+
+
+def from_allowed_cred_def(pres_ex_record: Dict, allowed: List[str]) -> bool:
+    """
+    Was every presented credential issued under one of our credential
+    definitions?
+
+    The proof request can only restrict on issuer_did (see
+    create_proof_request), which would also admit any other cred-def we happen
+    to have published under the same DID. This is the check that makes the
+    login accept exactly the Student ID and Faculty ID credentials.
+    """
+    presented = presented_cred_def_ids(pres_ex_record)
+    return bool(presented) and all(cid in allowed for cid in presented)
 
 
 def is_verified(pres_ex_record: Dict) -> bool:

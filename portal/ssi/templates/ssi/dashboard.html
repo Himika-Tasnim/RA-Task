@@ -2,10 +2,10 @@
 {% block title %}Dashboard — University Portal{% endblock %}
 
 {% block content %}
-{% if student.role == "faculty" %}
+{% if member.role == "faculty" %}
   <h1>Faculty Dashboard</h1>
   <p class="sub">
-    Signed in as {{ student.student_name }} — authenticated by verifiable
+    Signed in as {{ member.full_name }} — authenticated by verifiable
     presentation of a <strong>faculty</strong> credential.
   </p>
 
@@ -39,7 +39,7 @@
 {% else %}
   <h1>Student Dashboard</h1>
   <p class="sub">
-    Signed in as {{ student.student_name }} — authenticated by verifiable
+    Signed in as {{ member.full_name }} — authenticated by verifiable
     presentation of a <strong>student</strong> credential.
   </p>
 

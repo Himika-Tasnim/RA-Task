@@ -1,9 +1,9 @@
 {% extends "ssi/base.html" %}
-{% block title %}Issue Student ID{% endblock %}
+{% block title %}Issue a credential{% endblock %}
 
 {% block content %}
-<h1>Issue a Student ID credential</h1>
-<p class="sub">Registrar view — fills the credential, then the student scans to receive it.</p>
+<h1>Issue a university credential</h1>
+<p class="sub">Registrar view — fill in the details, then the holder scans to receive it.</p>
 
 {% if not artifacts %}
   <div class="alert error">
@@ -13,7 +13,7 @@
 {% endif %}
 
 <div class="card">
-  <h2>Student details</h2>
+  <h2>Credential details</h2>
   <form method="post" action="{% url 'issue_start' %}">
     {% csrf_token %}
     <label for="role">Issue as</label>
@@ -27,11 +27,11 @@
       they are. Issue one of each to demo student&nbsp;&harr;&nbsp;faculty messaging.
     </p>
 
-    <label for="student_name">Full name</label>
-    <input type="text" id="student_name" name="student_name" placeholder="Ayesha Rahman" required>
+    <label for="full_name">Full name</label>
+    <input type="text" id="full_name" name="full_name" placeholder="Ayesha Rahman" required>
 
-    <label for="student_id">ID number</label>
-    <input type="text" id="student_id" name="student_id" placeholder="STU-2024-0142" required>
+    <label for="id_number">ID number</label>
+    <input type="text" id="id_number" name="id_number" placeholder="STU-2024-0142" required>
 
     <label for="department">Department</label>
     <input type="text" id="department" name="department" placeholder="Computer Science" required>

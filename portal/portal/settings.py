@@ -110,21 +110,32 @@ ACAPY_ADMIN_URL = f"http://127.0.0.1:{os.getenv('AGENT_ADMIN_PORT', '8021')}"
 ACAPY_ADMIN_API_KEY = os.getenv("ACAPY_ADMIN_API_KEY", "demo-admin-api-key")
 
 # Student ID credential definition
-SCHEMA_NAME = "student_id_card"
-
-# 1.1 adds `role`, so a credential says whether its holder is a student or a
-# faculty member. That matters for the messaging feature: the two parties in a
-# conversation are identified by their credential, not by anything the portal
-# stores. Bumping the version means republishing the schema and cred-def --
-# credentials issued against 1.0 no longer satisfy the login proof request.
-SCHEMA_VERSION = "1.1"
-SCHEMA_ATTRIBUTES = ["student_name", "student_id", "department", "email", "role"]
-CRED_DEF_TAG = "university-portal"
-
-# Roles a credential may assert.
 ROLE_STUDENT = "student"
 ROLE_FACULTY = "faculty"
 ROLE_CHOICES = [
     (ROLE_STUDENT, "Student"),
     (ROLE_FACULTY, "Faculty"),
 ]
+
+# Attribute names are role-neutral: the same set describes a student and a
+# faculty member. Earlier versions used student_name/student_id, which read
+# wrongly on a faculty credential in the wallet.
+SCHEMA_ATTRIBUTES = ["full_name", "id_number", "department", "email", "role"]
+CRED_DEF_TAG = "university-portal"
+
+# A SEPARATE schema per role, so the two credentials are visibly different in
+# the wallet. A holder carrying both needs to tell them apart when choosing
+# which to present, and wallets label a card from its schema name -- two
+# credentials sharing one schema look identical.
+CREDENTIAL_TYPES = {
+    ROLE_STUDENT: {
+        "schema_name": "university_student_id",
+        "schema_version": "1.0",
+        "label": "Student ID",
+    },
+    ROLE_FACULTY: {
+        "schema_name": "university_faculty_id",
+        "schema_version": "1.0",
+        "label": "Faculty ID",
+    },
+}

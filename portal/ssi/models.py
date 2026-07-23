@@ -10,12 +10,17 @@ def short_token() -> str:
 
 class LedgerArtifacts(models.Model):
     """
-    The schema and credential definition published to the ledger.
+    A schema + credential definition published to the ledger, one per role.
 
-    Written once by `manage.py ssi_setup` and read by both the issuance and the
-    login flows, so the portal doesn't have to re-derive these ids.
+    There is a separate schema for students and faculty rather than a shared
+    one, because a wallet names a credential card after its schema. Sharing a
+    schema means a holder carrying both credentials sees two identical cards and
+    cannot tell which to present at login.
+
+    Written by `manage.py ssi_setup`, read by issuance and login.
     """
 
+    role = models.CharField(max_length=20, unique=True)
     schema_id = models.CharField(max_length=255)
     cred_def_id = models.CharField(max_length=255)
     issuer_did = models.CharField(max_length=255, blank=True)
@@ -25,11 +30,21 @@ class LedgerArtifacts(models.Model):
         verbose_name_plural = "Ledger artifacts"
 
     def __str__(self) -> str:
-        return self.cred_def_id
+        return f"{self.role}: {self.cred_def_id}"
 
     @classmethod
-    def current(cls):
-        return cls.objects.order_by("-created_at").first()
+    def for_role(cls, role: str):
+        return cls.objects.filter(role=role).first()
+
+    @classmethod
+    def cred_def_ids(cls) -> list:
+        """Every cred-def the login will accept -- one per role."""
+        return list(cls.objects.values_list("cred_def_id", flat=True))
+
+    @classmethod
+    def any(cls):
+        """Any published artifact, for 'is setup complete' checks."""
+        return cls.objects.order_by("role").first()
 
 
 class IssuanceRequest(models.Model):
@@ -47,8 +62,8 @@ class IssuanceRequest(models.Model):
     STATE_ISSUED = "issued"
     STATE_ERROR = "error"
 
-    student_name = models.CharField(max_length=120)
-    student_id = models.CharField(max_length=60)
+    full_name = models.CharField(max_length=120)
+    id_number = models.CharField(max_length=60)
     department = models.CharField(max_length=120)
     email = models.EmailField()
     # Asserted inside the credential, so the holder can prove which they are.
@@ -68,12 +83,12 @@ class IssuanceRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
-        return f"{self.student_name} ({self.student_id}) - {self.state}"
+        return f"{self.full_name} ({self.id_number}) - {self.state}"
 
     def attributes(self):
         return {
-            "student_name": self.student_name,
-            "student_id": self.student_id,
+            "full_name": self.full_name,
+            "id_number": self.id_number,
             "department": self.department,
             "email": self.email,
             "role": self.role,
@@ -125,6 +140,16 @@ class ChatInvitation(models.Model):
     STATE_CONNECTED = "connected"
 
     label = models.CharField(max_length=120, default="Faculty")
+    # Who this conversation is with. A chat is always between two named people,
+    # so the QR is generated for a specific person rather than "whoever scans".
+    counterparty = models.ForeignKey(
+        "IssuanceRequest",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="chats",
+    )
+    initiated_by_role = models.CharField(max_length=20, blank=True)
     invitation_msg_id = models.CharField(max_length=120, db_index=True)
     invitation_url = models.TextField(blank=True)
     invitation_json = models.JSONField(default=dict, blank=True)

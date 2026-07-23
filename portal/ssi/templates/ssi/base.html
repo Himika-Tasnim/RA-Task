@@ -112,15 +112,15 @@
     <nav>
       <a href="{% url 'home' %}"    class="{% if request.resolver_match.url_name == 'home' %}active{% endif %}">Home</a>
       <a href="{% url 'issue' %}"   class="{% if 'issue' in request.resolver_match.url_name %}active{% endif %}">Issue Credential</a>
-      {% if request.session.student %}
+      {% if request.session.member %}
         <a href="{% url 'dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">Dashboard</a>
         <a href="{% url 'profile' %}"   class="{% if request.resolver_match.url_name == 'profile' %}active{% endif %}">Profile</a>
         <a href="{% url 'messages' %}"  class="{% if request.resolver_match.url_name == 'messages' %}active{% endif %}">Messages</a>
       {% endif %}
     </nav>
     <div class="spacer"></div>
-    {% if request.session.student %}
-      <div class="who">{{ request.session.student.student_name }}</div>
+    {% if request.session.member %}
+      <div class="who">{{ request.session.member.full_name }}</div>
       <nav><a href="{% url 'logout' %}">Logout</a></nav>
     {% else %}
       <nav><a href="{% url 'login' %}" class="{% if request.resolver_match.url_name == 'login' %}active{% endif %}">Login</a></nav>

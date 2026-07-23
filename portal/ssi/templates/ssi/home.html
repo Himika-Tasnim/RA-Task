@@ -43,12 +43,12 @@
 <div class="card">
   <h2>How the demo runs</h2>
   <ol class="steps">
-    <li>Registrar issues a <strong>Student ID</strong> credential &mdash; the student scans the QR with their wallet and accepts it.</li>
-    <li>Student opens <strong>Login</strong>, scans the proof-request QR, and presents the credential.</li>
+    <li>Registrar issues a <strong>Student ID</strong> or <strong>Faculty ID</strong> credential &mdash; the holder scans the QR with their wallet and accepts it.</li>
+    <li>The holder opens <strong>Login</strong>, scans the proof-request QR, and presents the credential.</li>
     <li>ACA-Py verifies the presentation against the credential definition above; the portal then creates a session.</li>
-    <li>Student browses <strong>Dashboard</strong> and <strong>Profile</strong> with no re-authentication, then logs out.</li>
+    <li>They browse <strong>Dashboard</strong> and <strong>Profile</strong> with no re-authentication, then log out. What those pages show depends on the role inside the credential.</li>
   </ol>
-  <a class="btn" href="{% url 'issue' %}">Issue a Student ID</a>
+  <a class="btn" href="{% url 'issue' %}">Issue a credential</a>
   <a class="btn secondary" href="{% url 'login' %}">Log in with a credential</a>
 </div>
 {% endblock %}

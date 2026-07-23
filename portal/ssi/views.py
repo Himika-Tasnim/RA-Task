@@ -29,7 +29,13 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .acapy import AcaPyClient, AcaPyError, is_verified, revealed_attributes
+from .acapy import (
+    AcaPyClient,
+    AcaPyError,
+    from_allowed_cred_def,
+    is_verified,
+    revealed_attributes,
+)
 from .models import (
     BasicMessage,
     ChatInvitation,
@@ -40,7 +46,7 @@ from .models import (
 
 log = logging.getLogger(__name__)
 
-SESSION_KEY = "student"
+SESSION_KEY = "member"
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +92,7 @@ def ssi_login_required(view):
     @wraps(view)
     def wrapper(request, *args, **kwargs):
         if not request.session.get(SESSION_KEY):
-            flash.info(request, "Please log in with your Student ID credential.")
+            flash.info(request, "Please log in with your university credential.")
             return redirect("login")
         return view(request, *args, **kwargs)
 
@@ -94,7 +100,7 @@ def ssi_login_required(view):
 
 
 def _artifacts_or_redirect(request):
-    artifacts = LedgerArtifacts.current()
+    artifacts = LedgerArtifacts.any()
     if not artifacts:
         flash.error(
             request,
@@ -108,7 +114,7 @@ def _artifacts_or_redirect(request):
 # public pages
 # ---------------------------------------------------------------------------
 def home(request):
-    artifacts = LedgerArtifacts.current()
+    artifacts = LedgerArtifacts.any()
     agent_ok, agent_error = True, ""
     try:
         AcaPyClient().status()
@@ -122,7 +128,7 @@ def home(request):
             "artifacts": artifacts,
             "agent_ok": agent_ok,
             "agent_error": agent_error,
-            "student": request.session.get(SESSION_KEY),
+            "member": request.session.get(SESSION_KEY),
         },
     )
 
@@ -160,15 +166,15 @@ def issue_start(request):
     client = AcaPyClient()
     try:
         invitation = client.create_connection_invitation(
-            alias=f"{data['student_name']} ({data['student_id']})"
+            alias=f"{data['full_name']} ({data['id_number']})"
         )
     except AcaPyError as exc:
         flash.error(request, f"Could not create the invitation: {exc}")
         return redirect("issue")
 
     req = IssuanceRequest.objects.create(
-        student_name=data["student_name"],
-        student_id=data["student_id"],
+        full_name=data["full_name"],
+        id_number=data["id_number"],
         department=data["department"],
         email=data["email"],
         role=data["role"],
@@ -213,7 +219,7 @@ def issue_status(request, pk):
         {
             "state": req.state,
             "detail": req.detail,
-            "student_name": req.student_name,
+            "full_name": req.full_name,
             "done": req.state == IssuanceRequest.STATE_ISSUED,
         }
     )
@@ -233,7 +239,7 @@ def login_page(request):
     client = AcaPyClient()
     try:
         pres_ex = client.create_proof_request(
-            cred_def_id=artifacts.cred_def_id,
+            issuer_did=artifacts.issuer_did,
             attributes=settings.SCHEMA_ATTRIBUTES,
         )
         pres_ex_id = pres_ex["pres_ex_id"]
@@ -308,7 +314,7 @@ def login_complete(request, pres_ex_id):
     request.session.set_expiry(settings.SESSION_COOKIE_AGE)
 
     flash.success(
-        request, f"Welcome, {session.attributes.get('student_name', 'student')}!"
+        request, f"Welcome, {session.attributes.get('full_name', 'there')}!"
     )
     return redirect("dashboard")
 
@@ -362,6 +368,15 @@ def _apply_presentation(session: LoginSession, record: dict) -> None:
     record = record.get("pres_ex_record", record)
 
     if is_verified(record):
+        # The proof request could only pin the issuer DID, so confirm here that
+        # the credential actually presented is one of ours -- otherwise any
+        # other cred-def published under the same DID would be accepted.
+        if not from_allowed_cred_def(record, LedgerArtifacts.cred_def_ids()):
+            session.state = LoginSession.STATE_FAILED
+            session.detail = "That credential was not issued by this portal."
+            session.save()
+            return
+
         session.state = LoginSession.STATE_VERIFIED
         session.verified = True
         session.attributes = revealed_attributes(record)
@@ -382,18 +397,18 @@ def dashboard(request):
     return render(
         request,
         "ssi/dashboard.html",
-        {"student": request.session[SESSION_KEY]},
+        {"member": request.session[SESSION_KEY]},
     )
 
 
 @ssi_login_required
 def profile(request):
-    artifacts = LedgerArtifacts.current()
+    artifacts = LedgerArtifacts.any()
     return render(
         request,
         "ssi/profile.html",
         {
-            "student": request.session[SESSION_KEY],
+            "member": request.session[SESSION_KEY],
             "artifacts": artifacts,
             "pres_ex_id": request.session.get("pres_ex_id", ""),
         },
@@ -406,98 +421,141 @@ def profile(request):
 @ssi_login_required
 def messages_page(request):
     """
-    Faculty-side messaging over a direct DIDComm connection.
+    A directory of people you can message, not a QR generator.
 
-    Any connection ACA-Py holds can be messaged, but the chats created here get
-    their own connection from a scanned QR, which is what the bonus task asks
-    for: two parties connecting directly rather than reusing the issuance
-    channel.
+    A faculty member sees the students the university has issued to, a student
+    sees the faculty. Picking someone either opens the existing conversation or
+    shows a QR for them to scan -- so a message always goes to one named person
+    rather than "whoever scanned last".
     """
-    try:
-        connections = [
-            c
-            for c in AcaPyClient().list_connections()
-            if c.get("state") in ("active", "completed")
-        ]
-    except AcaPyError as exc:
-        flash.error(request, str(exc))
-        connections = []
-
-    # Chats deliberately created for messaging, newest first.
-    chats = ChatInvitation.objects.order_by("-created_at")[:5]
-    pending = [c for c in chats if c.state == ChatInvitation.STATE_AWAITING_SCAN]
-
-    selected = request.GET.get("connection_id") or (
-        connections[0]["connection_id"] if connections else ""
+    me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    other_role = (
+        settings.ROLE_STUDENT if my_role == settings.ROLE_FACULTY else settings.ROLE_FACULTY
     )
+
+    directory = []
+    for person in IssuanceRequest.objects.filter(
+        role=other_role, state=IssuanceRequest.STATE_ISSUED
+    ).order_by("full_name"):
+        chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
+        directory.append(
+            {
+                "person": person,
+                "connected": bool(chat),
+                "unread": BasicMessage.objects.filter(
+                    connection_id=chat.connection_id, outgoing=False
+                ).count()
+                if chat
+                else 0,
+            }
+        )
 
     return render(
         request,
         "ssi/messages.html",
         {
-            "student": request.session[SESSION_KEY],
-            "connections": connections,
-            "selected": selected,
-            "thread": BasicMessage.objects.filter(connection_id=selected),
-            "pending_chat": pending[0] if pending else None,
-            "pending_qr": qr_data_uri(short_invitation_url(pending[0].token)) if pending else "",
-            "pending_short_url": short_invitation_url(pending[0].token) if pending else "",
+            "member": me,
+            "my_role": my_role,
+            "other_role_label": "students" if other_role == settings.ROLE_STUDENT else "faculty",
+            "directory": directory,
         },
     )
 
 
 @ssi_login_required
+def messages_thread(request, pk):
+    """One conversation with one person."""
+    me = request.session[SESSION_KEY]
+    person = get_object_or_404(IssuanceRequest, pk=pk)
+
+    chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
+    pending = person.chats.filter(state=ChatInvitation.STATE_AWAITING_SCAN).first()
+
+    context = {
+        "member": me,
+        "person": person,
+        "chat": chat,
+        "pending": pending,
+        "thread": BasicMessage.objects.filter(connection_id=chat.connection_id)
+        if chat
+        else [],
+    }
+    if pending:
+        short_url = short_invitation_url(pending.token)
+        context["qr"] = qr_data_uri(short_url)
+        context["short_url"] = short_url
+    return render(request, "ssi/message_thread.html", context)
+
+
+@ssi_login_required
 @require_POST
-def messages_start(request):
-    """Create a QR the other party scans to form a direct messaging connection."""
-    label = request.POST.get("label", "").strip() or "Faculty"
+def messages_start(request, pk):
+    """Create (or reuse) a direct connection invitation for one specific person."""
+    me = request.session[SESSION_KEY]
+    person = get_object_or_404(IssuanceRequest, pk=pk)
+
+    if person.chats.filter(state=ChatInvitation.STATE_CONNECTED).exists():
+        return redirect("messages_thread", pk=pk)
+
+    existing = person.chats.filter(state=ChatInvitation.STATE_AWAITING_SCAN).first()
+    if existing:
+        return redirect("messages_thread", pk=pk)
+
     try:
-        invitation = AcaPyClient().create_connection_invitation(alias=f"chat: {label}")
+        invitation = AcaPyClient().create_connection_invitation(
+            alias=f"chat: {person.full_name} ({person.id_number})"
+        )
     except AcaPyError as exc:
         flash.error(request, f"Could not create the invitation: {exc}")
         return redirect("messages")
 
     ChatInvitation.objects.create(
-        label=label,
+        label=person.full_name,
+        counterparty=person,
+        initiated_by_role=me.get("role", ""),
         invitation_msg_id=invitation.get("invi_msg_id", ""),
         invitation_url=invitation.get("invitation_url", ""),
         invitation_json=invitation.get("invitation", {}),
     )
-    flash.success(request, "Scan the code with the other wallet to connect.")
-    return redirect("messages")
+    return redirect("messages_thread", pk=pk)
 
 
 @ssi_login_required
-def messages_status(request):
-    """Polled while waiting for the other party to scan."""
-    chat = ChatInvitation.objects.order_by("-created_at").first()
-    latest = BasicMessage.objects.filter(
-        connection_id=request.GET.get("connection_id", "")
-    ).count()
+def messages_status(request, pk):
+    """Polled while waiting for a scan, and for new incoming messages."""
+    person = get_object_or_404(IssuanceRequest, pk=pk)
+    chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
     return JsonResponse(
         {
-            "state": chat.state if chat else "none",
-            "connection_id": chat.connection_id if chat else "",
-            "their_label": chat.their_label if chat else "",
-            "message_count": latest,
+            "connected": bool(chat),
+            "message_count": BasicMessage.objects.filter(
+                connection_id=chat.connection_id
+            ).count()
+            if chat
+            else 0,
         }
     )
 
 
 @ssi_login_required
 @require_POST
-def messages_send(request):
-    connection_id = request.POST.get("connection_id", "")
+def messages_send(request, pk):
+    person = get_object_or_404(IssuanceRequest, pk=pk)
+    chat = person.chats.filter(state=ChatInvitation.STATE_CONNECTED).first()
     content = request.POST.get("content", "").strip()
-    if connection_id and content:
+
+    if not chat:
+        flash.error(request, f"{person.full_name} has not connected yet.")
+    elif content:
         try:
-            AcaPyClient().send_basic_message(connection_id, content)
+            AcaPyClient().send_basic_message(chat.connection_id, content)
             BasicMessage.objects.create(
-                connection_id=connection_id, content=content, outgoing=True
+                connection_id=chat.connection_id, content=content, outgoing=True
             )
         except AcaPyError as exc:
             flash.error(request, f"Could not send: {exc}")
-    return redirect(f"/messages/?connection_id={connection_id}")
+    return redirect("messages_thread", pk=pk)
 
 
 # ---------------------------------------------------------------------------
@@ -568,10 +626,10 @@ def _on_connection(payload: dict) -> None:
     req.state = IssuanceRequest.STATE_CONNECTED
     req.save(update_fields=["connection_id", "state"])
 
-    artifacts = LedgerArtifacts.current()
+    artifacts = LedgerArtifacts.for_role(req.role)
     if not artifacts:
         req.state = IssuanceRequest.STATE_ERROR
-        req.detail = "No credential definition published."
+        req.detail = f"No credential definition published for role '{req.role}'."
         req.save(update_fields=["state", "detail"])
         return
 

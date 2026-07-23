@@ -4,7 +4,8 @@
 {% block content %}
 <h1>Scan to receive your Student ID</h1>
 <p class="sub">
-  Issuing to <strong>{{ req.student_name }}</strong> ({{ req.student_id }})
+  Issuing a <strong>{% if req.role == "faculty" %}Faculty ID{% else %}Student ID{% endif %}</strong>
+  to <strong>{{ req.full_name }}</strong> ({{ req.id_number }})
 </p>
 
 <div class="card">

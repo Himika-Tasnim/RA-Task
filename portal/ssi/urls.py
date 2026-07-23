@@ -21,11 +21,12 @@ urlpatterns = [
     path("dashboard/", views.dashboard, name="dashboard"),
     path("profile/", views.profile, name="profile"),
 
-    # Bonus: 1-to-1 DIDComm messaging
+    # Bonus: 1-to-1 DIDComm messaging, addressed to a specific person
     path("messages/", views.messages_page, name="messages"),
-    path("messages/start/", views.messages_start, name="messages_start"),
-    path("messages/status/", views.messages_status, name="messages_status"),
-    path("messages/send/", views.messages_send, name="messages_send"),
+    path("messages/<int:pk>/", views.messages_thread, name="messages_thread"),
+    path("messages/<int:pk>/start/", views.messages_start, name="messages_start"),
+    path("messages/<int:pk>/status/", views.messages_status, name="messages_status"),
+    path("messages/<int:pk>/send/", views.messages_send, name="messages_send"),
 
     # Short invitation URLs -- what the compact QR codes encode
     path("i/<str:token>/", views.oob_invitation, name="oob_invitation"),

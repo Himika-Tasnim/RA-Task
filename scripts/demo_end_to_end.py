@@ -39,8 +39,8 @@ ISSUER = f"http://127.0.0.1:{os.getenv('AGENT_ADMIN_PORT', '8021')}"
 HEADERS = {"X-API-KEY": os.getenv("ACAPY_ADMIN_API_KEY", "demo-admin-api-key")}
 
 STUDENT = {
-    "student_name": "Ayesha Rahman",
-    "student_id": "STU-2024-0142",
+    "full_name": "Ayesha Rahman",
+    "id_number": "STU-2024-0142",
     "department": "Computer Science",
     "email": "ayesha@demo-university.edu",
     "role": "student",
@@ -154,7 +154,7 @@ def issue_credential(session: requests.Session) -> None:
     cred = wait_for(new_credential_stored, "the credential to reach the wallet", timeout=120)
     print(f"{PASS} credential stored in the holder's wallet")
     print(f"         cred_def: {cred.get('cred_def_id')}")
-    for key in ("student_name", "student_id", "department", "email"):
+    for key in ("full_name", "id_number", "department", "email"):
         print(f"         {key:13}= {cred['attrs'][key]}")
 
     def portal_says_issued():
@@ -215,7 +215,7 @@ def browse_protected(session: requests.Session) -> None:
 
     for name, path, must_contain in (
         ("Dashboard", "/dashboard/", "Enrolled courses"),
-        ("Profile", "/profile/", STUDENT["student_id"]),
+        ("Profile", "/profile/", STUDENT["id_number"]),
         ("Dashboard again", "/dashboard/", "Enrolled courses"),
     ):
         resp = session.get(f"{PORTAL}{path}", timeout=15)

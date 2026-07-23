@@ -1,6 +1,6 @@
 """
 Negative tests: prove the portal rejects everything that isn't a valid,
-university-issued Student ID credential.
+university-issued credential.
 
 `demo_end_to_end.py` shows the happy path works. That alone doesn't prove the
 login is *authentication* -- a portal that let anyone in would also pass it.
@@ -46,8 +46,8 @@ H = {"X-API-KEY": os.getenv("ACAPY_ADMIN_API_KEY", "demo-admin-api-key")}
 
 IMPOSTOR_TAG = "not-the-university"
 STUDENT = {
-    "student_name": "Mallory Impostor",
-    "student_id": "STU-9999-0001",
+    "full_name": "Mallory Impostor",
+    "id_number": "STU-9999-0001",
     "department": "Computer Science",
     "email": "mallory@example.com",
     "role": "student",
@@ -200,7 +200,7 @@ def test_wrong_issuer():
     artifacts = requests.get(f"{PORTAL}/", timeout=15)  # ensure portal awake
     schema_id = requests.get(
         f"{ISSUER}/schemas/created", headers=H,
-        params={"schema_name": "student_id_card", "schema_version": "1.0"}, timeout=30,
+        params={"schema_name": "university_student_id", "schema_version": "1.0"}, timeout=30,
     ).json().get("schema_ids", [None])[0]
     if not schema_id:
         check("found the schema on the ledger", False)
@@ -266,7 +266,7 @@ def test_wrong_issuer():
     artifacts_page = requests.get(f"{PORTAL}/", timeout=15).text
     m = re.search(r"([0-9A-Za-z]{21,22}:3:CL:\d+:university-portal)", artifacts_page)
     if m and issue_to_holder(m.group(1), {
-        "student_name": "Ayesha Rahman", "student_id": "STU-2024-0142",
+        "full_name": "Ayesha Rahman", "id_number": "STU-2024-0142",
         "department": "Computer Science", "email": "ayesha@demo-university.edu",
         "role": "student",
     }):
