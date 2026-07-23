@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # portal/portal/settings.py -> portal/portal -> portal -> <repo root>
@@ -24,8 +25,28 @@ from lanip import primary_host_ip  # noqa: E402
 
 AGENT_HOST_IP = primary_host_ip(os.getenv("AGENT_HOST_IP", "auto"))
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-demo-key-replace-in-production")
+DEFAULT_SECRET = "django-insecure-demo-key-replace-in-production"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", DEFAULT_SECRET)
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
+
+# The demo defaults are fine on a laptop on your own WiFi. They are not fine
+# anywhere else, and the difference is easy to miss -- so refuse to run with
+# DEBUG off (the "this is real now" signal) while still using them.
+if not DEBUG:
+    _weak = []
+    if SECRET_KEY == DEFAULT_SECRET:
+        _weak.append("DJANGO_SECRET_KEY")
+    if os.getenv("ACAPY_ADMIN_API_KEY", "demo-admin-api-key") == "demo-admin-api-key":
+        _weak.append("ACAPY_ADMIN_API_KEY")
+    if os.getenv("WEBHOOK_API_KEY", "demo-webhook-api-key") == "demo-webhook-api-key":
+        _weak.append("WEBHOOK_API_KEY")
+    if os.getenv("WALLET_KEY", "demo-wallet-key-change-me") == "demo-wallet-key-change-me":
+        _weak.append("WALLET_KEY")
+    if _weak:
+        raise ImproperlyConfigured(
+            "Refusing to start with DEBUG=0 while these still hold their demo "
+            f"defaults: {', '.join(_weak)}. Set real values in .env."
+        )
 
 # The phone browser may hit this over the LAN, and ACA-Py posts webhooks to it,
 # so accept any Host header. Fine for a local demo; tighten for real deployments.
@@ -36,8 +57,6 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
@@ -50,7 +69,6 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -66,7 +84,6 @@ TEMPLATES = [
             "context_processors": [
                 "django.template.context_processors.debug",
                 "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
             ],
         },
@@ -82,8 +99,6 @@ DATABASES = {
     }
 }
 
-AUTH_PASSWORD_VALIDATORS = []
-
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
@@ -98,6 +113,19 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_AGE = 60 * 60  # 1 hour
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+# Hardening that costs nothing over plain HTTP. The Secure flag is deliberately
+# left off: the demo runs on http:// over the LAN so the phone can reach it, and
+# setting it would stop the cookie being sent at all. Turn both on behind TLS.
+SESSION_COOKIE_HTTPONLY = True          # not readable from JavaScript
+SESSION_COOKIE_SAMESITE = "Lax"         # not sent on cross-site POSTs
+CSRF_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = os.getenv("PORTAL_HTTPS", "0") == "1"
+CSRF_COOKIE_SECURE = os.getenv("PORTAL_HTTPS", "0") == "1"
+
+X_FRAME_OPTIONS = "DENY"                # no framing, so no clickjacked QR scans
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"  # keep invitation tokens out of Referer
 
 # ---------------------------------------------------------------------------
 # ACA-Py wiring

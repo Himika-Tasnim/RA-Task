@@ -111,6 +111,45 @@ def _my_chats(me):
     return ChatInvitation.objects.filter(owner_id_number=me.get("id_number", ""))
 
 
+def registrar_required(view):
+    """
+    Only a faculty member may issue credentials.
+
+    Left open, anyone who could reach the portal could mint themselves a
+    *faculty* credential and then log in perfectly legitimately with it -- the
+    credential would be genuine, so no amount of proof verification downstream
+    would catch it. Issuance is the root of trust here and has to be gated.
+
+    Exception: while no faculty credential has ever been issued there is nobody
+    who *could* log in to authorise the first one, so the first issuance is
+    allowed to bootstrap. The page says so plainly when that applies.
+    """
+
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        member = request.session.get(SESSION_KEY) or {}
+        if member.get("role") == settings.ROLE_FACULTY:
+            return view(request, *args, **kwargs)
+
+        if not IssuanceRequest.objects.filter(
+            role=settings.ROLE_FACULTY, state=IssuanceRequest.STATE_ISSUED
+        ).exists():
+            # Bootstrap: no faculty exists yet, so allow the first issuance.
+            return view(request, *args, **kwargs)
+
+        flash.error(request, "Only faculty can issue credentials. Please log in.")
+        return redirect("login")
+
+    return wrapper
+
+
+def bootstrap_mode() -> bool:
+    """True while no faculty credential has been issued yet."""
+    return not IssuanceRequest.objects.filter(
+        role=settings.ROLE_FACULTY, state=IssuanceRequest.STATE_ISSUED
+    ).exists()
+
+
 def _artifacts_or_redirect(request):
     artifacts = LedgerArtifacts.any()
     if not artifacts:
@@ -148,6 +187,7 @@ def home(request):
 # ---------------------------------------------------------------------------
 # issuance
 # ---------------------------------------------------------------------------
+@registrar_required
 def issue_page(request):
     return render(
         request,
@@ -155,10 +195,13 @@ def issue_page(request):
         {
             "artifacts": _artifacts_or_redirect(request),
             "role_choices": settings.ROLE_CHOICES,
+            "bootstrap": bootstrap_mode(),
+            "member": request.session.get(SESSION_KEY),
         },
     )
 
 
+@registrar_required
 @require_POST
 def issue_start(request):
     artifacts = _artifacts_or_redirect(request)

@@ -12,6 +12,18 @@
   </div>
 {% endif %}
 
+{% if bootstrap %}
+  <div class="alert warning">
+    <strong>First-run bootstrap.</strong> No faculty credential exists yet, so
+    this page is open. Issue a <strong>Faculty</strong> credential first — after
+    that, issuing requires being logged in as faculty.
+  </div>
+{% elif member.role == "faculty" %}
+  <div class="alert success">
+    Issuing as <strong>{{ member.full_name }}</strong> (faculty).
+  </div>
+{% endif %}
+
 <div class="card">
   <h2>Credential details</h2>
   <form method="post" action="{% url 'issue_start' %}">

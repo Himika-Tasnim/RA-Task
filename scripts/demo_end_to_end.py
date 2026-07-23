@@ -100,6 +100,12 @@ def issue_credential(session: requests.Session) -> None:
     before = held_referents()
 
     page = session.get(f"{PORTAL}/issue/", timeout=15)
+    if "/login" in page.url:
+        die(
+            "Issuance is gated: a faculty credential already exists, so /issue/ "
+            "now requires a faculty login.\n"
+            "  Reset the demo data first:  python portal/manage.py reset_demo"
+        )
     csrf = session.cookies.get("csrftoken", "")
     resp = session.post(
         f"{PORTAL}/issue/start/",
