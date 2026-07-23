@@ -2,28 +2,65 @@
 {% block title %}Dashboard — University Portal{% endblock %}
 
 {% block content %}
-<h1>Dashboard</h1>
-<p class="sub">
-  Signed in as {{ student.student_name }} — authenticated by verifiable presentation.
-</p>
+{% if student.role == "faculty" %}
+  <h1>Faculty Dashboard</h1>
+  <p class="sub">
+    Signed in as {{ student.student_name }} — authenticated by verifiable
+    presentation of a <strong>faculty</strong> credential.
+  </p>
 
-<div class="card">
-  <h2>Enrolled courses</h2>
-  <table class="kv">
-    <tr><th>CSE-401</th><td>Distributed Systems &mdash; Tue/Thu 10:00</td></tr>
-    <tr><th>CSE-412</th><td>Applied Cryptography &mdash; Mon 14:00</td></tr>
-    <tr><th>CSE-430</th><td>Identity &amp; Trust Systems &mdash; Wed 09:00</td></tr>
-  </table>
-</div>
+  <div class="card">
+    <h2>Courses you teach</h2>
+    <table class="kv">
+      <tr><th>CSE-401</th><td>Distributed Systems &mdash; 48 enrolled</td></tr>
+      <tr><th>CSE-412</th><td>Applied Cryptography &mdash; 31 enrolled</td></tr>
+      <tr><th>CSE-430</th><td>Identity &amp; Trust Systems &mdash; 22 enrolled</td></tr>
+    </table>
+  </div>
 
-<div class="card">
-  <h2>Notices</h2>
-  <ol class="steps">
-    <li>Semester registration closes on the 30th.</li>
-    <li>Library credentials migrated to the SSI wallet.</li>
-    <li>Results for CSE-401 midterm are published.</li>
-  </ol>
-</div>
+  <div class="card">
+    <h2>Awaiting you</h2>
+    <ol class="steps">
+      <li>14 CSE-401 midterm scripts left to grade.</li>
+      <li>3 students requested supervision meetings.</li>
+      <li>Departmental meeting Thursday, 15:00.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Staff tools</h2>
+    <p class="muted">
+      Available because your credential asserts <code>role = faculty</code>.
+      A student presenting a student credential does not see this panel.
+    </p>
+    <a class="btn" href="{% url 'messages' %}">Message a student</a>
+    <a class="btn secondary" href="{% url 'issue' %}">Issue a credential</a>
+  </div>
+{% else %}
+  <h1>Student Dashboard</h1>
+  <p class="sub">
+    Signed in as {{ student.student_name }} — authenticated by verifiable
+    presentation of a <strong>student</strong> credential.
+  </p>
+
+  <div class="card">
+    <h2>Enrolled courses</h2>
+    <table class="kv">
+      <tr><th>CSE-401</th><td>Distributed Systems &mdash; Tue/Thu 10:00</td></tr>
+      <tr><th>CSE-412</th><td>Applied Cryptography &mdash; Mon 14:00</td></tr>
+      <tr><th>CSE-430</th><td>Identity &amp; Trust Systems &mdash; Wed 09:00</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Notices</h2>
+    <ol class="steps">
+      <li>Semester registration closes on the 30th.</li>
+      <li>Library credentials migrated to the SSI wallet.</li>
+      <li>Results for CSE-401 midterm are published.</li>
+    </ol>
+  </div>
+{% endif %}
 
 <div class="card">
   <h2>This is a protected page</h2>
