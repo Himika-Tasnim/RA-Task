@@ -22,3 +22,6 @@ agent/*.log
 Thumbs.db
 .vscode/
 .idea/
+
+# Locally served wallet build (do not commit a 179MB binary)
+portal/ssi/static/*.apk
