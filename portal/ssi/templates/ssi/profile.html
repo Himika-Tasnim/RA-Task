@@ -13,7 +13,8 @@
   </p>
   <table class="kv">
     <tr><th>Name</th><td>{{ student.student_name }}</td></tr>
-    <tr><th>Student ID</th><td>{{ student.student_id }}</td></tr>
+    <tr><th>Role</th><td><span class="pill ok">{{ student.role|default:"student" }}</span></td></tr>
+    <tr><th>ID number</th><td>{{ student.student_id }}</td></tr>
     <tr><th>Department</th><td>{{ student.department }}</td></tr>
     <tr><th>Email</th><td>{{ student.email }}</td></tr>
   </table>

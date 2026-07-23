@@ -51,6 +51,8 @@ class IssuanceRequest(models.Model):
     student_id = models.CharField(max_length=60)
     department = models.CharField(max_length=120)
     email = models.EmailField()
+    # Asserted inside the credential, so the holder can prove which they are.
+    role = models.CharField(max_length=20, default="student")
 
     invitation_msg_id = models.CharField(max_length=120, db_index=True)
     invitation_url = models.TextField(blank=True)
@@ -74,6 +76,7 @@ class IssuanceRequest(models.Model):
             "student_id": self.student_id,
             "department": self.department,
             "email": self.email,
+            "role": self.role,
         }
 
 
@@ -102,6 +105,37 @@ class LoginSession(models.Model):
 
     def __str__(self) -> str:
         return f"{self.pres_ex_id} - {self.state}"
+
+
+class ChatInvitation(models.Model):
+    """
+    A direct DIDComm connection created purely for messaging.
+
+    The bonus task asks for a student and a faculty member to form a connection
+    by scanning a QR, then exchange text. This is that invitation: the faculty
+    member opens the messaging page, the student scans the code with their
+    wallet, and the resulting connection carries Basic Messages both ways.
+
+    Deliberately separate from IssuanceRequest -- this connection is not tied to
+    any credential, which is what makes it a *direct* connection between two
+    parties rather than a by-product of issuance.
+    """
+
+    STATE_AWAITING_SCAN = "awaiting_scan"
+    STATE_CONNECTED = "connected"
+
+    label = models.CharField(max_length=120, default="Faculty")
+    invitation_msg_id = models.CharField(max_length=120, db_index=True)
+    invitation_url = models.TextField(blank=True)
+    invitation_json = models.JSONField(default=dict, blank=True)
+    token = models.CharField(max_length=32, default=short_token, db_index=True)
+    connection_id = models.CharField(max_length=120, blank=True, db_index=True)
+    their_label = models.CharField(max_length=120, blank=True)
+    state = models.CharField(max_length=32, default=STATE_AWAITING_SCAN)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.label} chat - {self.state}"
 
 
 class BasicMessage(models.Model):

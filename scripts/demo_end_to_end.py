@@ -43,6 +43,7 @@ STUDENT = {
     "student_id": "STU-2024-0142",
     "department": "Computer Science",
     "email": "ayesha@demo-university.edu",
+    "role": "student",
 }
 
 PASS, FAIL = "  [OK]  ", "  [FAIL]"

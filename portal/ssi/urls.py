@@ -23,6 +23,8 @@ urlpatterns = [
 
     # Bonus: 1-to-1 DIDComm messaging
     path("messages/", views.messages_page, name="messages"),
+    path("messages/start/", views.messages_start, name="messages_start"),
+    path("messages/status/", views.messages_status, name="messages_status"),
     path("messages/send/", views.messages_send, name="messages_send"),
 
     # Short invitation URLs -- what the compact QR codes encode

@@ -30,7 +30,13 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from .acapy import AcaPyClient, AcaPyError, is_verified, revealed_attributes
-from .models import BasicMessage, IssuanceRequest, LedgerArtifacts, LoginSession
+from .models import (
+    BasicMessage,
+    ChatInvitation,
+    IssuanceRequest,
+    LedgerArtifacts,
+    LoginSession,
+)
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +134,10 @@ def issue_page(request):
     return render(
         request,
         "ssi/issue.html",
-        {"artifacts": _artifacts_or_redirect(request)},
+        {
+            "artifacts": _artifacts_or_redirect(request),
+            "role_choices": settings.ROLE_CHOICES,
+        },
     )
 
 
@@ -139,6 +148,10 @@ def issue_start(request):
         return redirect("issue")
 
     data = {k: request.POST.get(k, "").strip() for k in settings.SCHEMA_ATTRIBUTES}
+    data.setdefault("role", settings.ROLE_STUDENT)
+    if data["role"] not in dict(settings.ROLE_CHOICES):
+        data["role"] = settings.ROLE_STUDENT
+
     missing = [k for k, v in data.items() if not v]
     if missing:
         flash.error(request, f"Please fill in: {', '.join(missing)}")
@@ -158,6 +171,7 @@ def issue_start(request):
         student_id=data["student_id"],
         department=data["department"],
         email=data["email"],
+        role=data["role"],
         invitation_msg_id=invitation.get("invi_msg_id", ""),
         invitation_url=invitation.get("invitation_url", ""),
         invitation_json=invitation.get("invitation", {}),
@@ -311,6 +325,7 @@ def oob_invitation(request, token):
     record = (
         LoginSession.objects.filter(token=token).first()
         or IssuanceRequest.objects.filter(token=token).first()
+        or ChatInvitation.objects.filter(token=token).first()
     )
     if not record or not record.invitation_json:
         raise Http404("Unknown or expired invitation.")
@@ -390,6 +405,14 @@ def profile(request):
 # ---------------------------------------------------------------------------
 @ssi_login_required
 def messages_page(request):
+    """
+    Faculty-side messaging over a direct DIDComm connection.
+
+    Any connection ACA-Py holds can be messaged, but the chats created here get
+    their own connection from a scanned QR, which is what the bonus task asks
+    for: two parties connecting directly rather than reusing the issuance
+    channel.
+    """
     try:
         connections = [
             c
@@ -400,9 +423,14 @@ def messages_page(request):
         flash.error(request, str(exc))
         connections = []
 
+    # Chats deliberately created for messaging, newest first.
+    chats = ChatInvitation.objects.order_by("-created_at")[:5]
+    pending = [c for c in chats if c.state == ChatInvitation.STATE_AWAITING_SCAN]
+
     selected = request.GET.get("connection_id") or (
         connections[0]["connection_id"] if connections else ""
     )
+
     return render(
         request,
         "ssi/messages.html",
@@ -411,7 +439,48 @@ def messages_page(request):
             "connections": connections,
             "selected": selected,
             "thread": BasicMessage.objects.filter(connection_id=selected),
+            "pending_chat": pending[0] if pending else None,
+            "pending_qr": qr_data_uri(short_invitation_url(pending[0].token)) if pending else "",
+            "pending_short_url": short_invitation_url(pending[0].token) if pending else "",
         },
+    )
+
+
+@ssi_login_required
+@require_POST
+def messages_start(request):
+    """Create a QR the other party scans to form a direct messaging connection."""
+    label = request.POST.get("label", "").strip() or "Faculty"
+    try:
+        invitation = AcaPyClient().create_connection_invitation(alias=f"chat: {label}")
+    except AcaPyError as exc:
+        flash.error(request, f"Could not create the invitation: {exc}")
+        return redirect("messages")
+
+    ChatInvitation.objects.create(
+        label=label,
+        invitation_msg_id=invitation.get("invi_msg_id", ""),
+        invitation_url=invitation.get("invitation_url", ""),
+        invitation_json=invitation.get("invitation", {}),
+    )
+    flash.success(request, "Scan the code with the other wallet to connect.")
+    return redirect("messages")
+
+
+@ssi_login_required
+def messages_status(request):
+    """Polled while waiting for the other party to scan."""
+    chat = ChatInvitation.objects.order_by("-created_at").first()
+    latest = BasicMessage.objects.filter(
+        connection_id=request.GET.get("connection_id", "")
+    ).count()
+    return JsonResponse(
+        {
+            "state": chat.state if chat else "none",
+            "connection_id": chat.connection_id if chat else "",
+            "their_label": chat.their_label if chat else "",
+            "message_count": latest,
+        }
     )
 
 
@@ -476,6 +545,16 @@ def _on_connection(payload: dict) -> None:
     invitation_msg_id = payload.get("invitation_msg_id")
     connection_id = payload.get("connection_id")
     if not invitation_msg_id or not connection_id:
+        return
+
+    # A messaging connection (bonus feature) carries no credential -- record it
+    # and stop, so we don't try to issue anything down it.
+    chat = ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id).first()
+    if chat:
+        chat.connection_id = connection_id
+        chat.their_label = payload.get("their_label", "") or ""
+        chat.state = ChatInvitation.STATE_CONNECTED
+        chat.save(update_fields=["connection_id", "their_label", "state"])
         return
 
     req = IssuanceRequest.objects.filter(

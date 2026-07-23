@@ -50,6 +50,7 @@ STUDENT = {
     "student_id": "STU-9999-0001",
     "department": "Computer Science",
     "email": "mallory@example.com",
+    "role": "student",
 }
 
 passed = failed = 0
@@ -267,6 +268,7 @@ def test_wrong_issuer():
     if m and issue_to_holder(m.group(1), {
         "student_name": "Ayesha Rahman", "student_id": "STU-2024-0142",
         "department": "Computer Science", "email": "ayesha@demo-university.edu",
+        "role": "student",
     }):
         print("     genuine credential restored")
     else:

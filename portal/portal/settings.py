@@ -111,6 +111,20 @@ ACAPY_ADMIN_API_KEY = os.getenv("ACAPY_ADMIN_API_KEY", "demo-admin-api-key")
 
 # Student ID credential definition
 SCHEMA_NAME = "student_id_card"
-SCHEMA_VERSION = "1.0"
-SCHEMA_ATTRIBUTES = ["student_name", "student_id", "department", "email"]
+
+# 1.1 adds `role`, so a credential says whether its holder is a student or a
+# faculty member. That matters for the messaging feature: the two parties in a
+# conversation are identified by their credential, not by anything the portal
+# stores. Bumping the version means republishing the schema and cred-def --
+# credentials issued against 1.0 no longer satisfy the login proof request.
+SCHEMA_VERSION = "1.1"
+SCHEMA_ATTRIBUTES = ["student_name", "student_id", "department", "email", "role"]
 CRED_DEF_TAG = "university-portal"
+
+# Roles a credential may assert.
+ROLE_STUDENT = "student"
+ROLE_FACULTY = "faculty"
+ROLE_CHOICES = [
+    (ROLE_STUDENT, "Student"),
+    (ROLE_FACULTY, "Faculty"),
+]

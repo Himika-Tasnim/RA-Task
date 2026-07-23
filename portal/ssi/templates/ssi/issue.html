@@ -16,10 +16,21 @@
   <h2>Student details</h2>
   <form method="post" action="{% url 'issue_start' %}">
     {% csrf_token %}
+    <label for="role">Issue as</label>
+    <select id="role" name="role" required>
+      {% for value, display in role_choices %}
+        <option value="{{ value }}">{{ display }}</option>
+      {% endfor %}
+    </select>
+    <p class="muted" style="margin-top:6px">
+      The role is asserted inside the credential, so the holder can prove which
+      they are. Issue one of each to demo student&nbsp;&harr;&nbsp;faculty messaging.
+    </p>
+
     <label for="student_name">Full name</label>
     <input type="text" id="student_name" name="student_name" placeholder="Ayesha Rahman" required>
 
-    <label for="student_id">Student ID</label>
+    <label for="student_id">ID number</label>
     <input type="text" id="student_id" name="student_id" placeholder="STU-2024-0142" required>
 
     <label for="department">Department</label>
