@@ -125,6 +125,21 @@ asynchronously via signed webhooks handled in
 
 ### 2.1 Issuance — getting a credential onto a phone
 
+```
+Faculty          Django portal            ACA-Py agent            Holder wallet
+   │  fill form        │                        │                        │
+   ├───────────────────►  create invitation      │                        │
+   │                   ├────────────────────────►│                        │
+   │   QR code          │◄────────── invitation ─┤                        │
+   │◄───────────────────┤                        │◄─────────── scan ──────┤
+   │                   │◄──── webhook: connected ─┤                        │
+   │                   ├────────────────────────► send credential offer   │
+   │                   │                        ├───────────────────────►│
+   │                   │                        │◄──────── accept ───────┤
+   │   "issued"         │◄──── webhook: issued ───┤                        │
+   │◄───────────────────┤                        │                        │
+```
+
 1. A **faculty member** opens `/issue/`, picks **Student** or **Faculty**,
    and fills in the person's details.
 2. The portal asks ACA-Py for an out-of-band invitation and renders it as a
@@ -148,6 +163,21 @@ no faculty credential yet, where it opens itself for exactly one bootstrap
 issuance (since nobody could otherwise log in to authorize the first one).
 
 ### 2.2 Login — proving who you are without a password
+
+```
+Anyone            Django portal            ACA-Py agent            Holder wallet
+   │  open /login/     │                        │                        │
+   ├───────────────────► create proof request    │                        │
+   │                   ├────────────────────────►│                        │
+   │   QR code          │◄────── proof request ──┤                        │
+   │◄───────────────────┤                        │◄─────────── scan ──────┤
+   │                   │                        │◄──── present + share ──┤
+   │                   │◄──── webhook: verified ─┤ (verified cryptographically)
+   │                   │  re-checks with ACA-Py  │                        │
+   │                   ├────────────────────────►│                        │
+   │  session created   │◄──────── confirmed ─────┤                        │
+   │◄───────────────────┤                        │                        │
+```
 
 1. `/login/` asks ACA-Py for a proof request restricted to this
    university's credentials (`issuer_did` restriction) and wraps it in a
@@ -180,6 +210,27 @@ the portal's own UI.
 
 The connect handshake, when Karim (faculty) presses **Connect** on Tanvir
 (student)'s row:
+
+```
+Karim (faculty)      Django portal        ACA-Py agent       Tanvir (student)
+   │  click Connect       │                     │                     │
+   ├──────────────────────► create invitation    │                     │
+   │                      ├────────────────────►│                     │
+   │  "waiting on them"    │◄──── invitation ────┤                     │
+   │◄──────────────────────┤                     │                     │
+   │                      │                     │◄─ Tanvir opens his ─┤
+   │                      │                     │   own Messages page,│
+   │                      │                     │   scans with HIS    │
+   │                      │                     │   own wallet        │
+   │                      │◄─ webhook: request ──┤◄────────────────────┤
+   │                      │                     │  auto-accept →      │
+   │                      │                     ├─── response ───────►│
+   │                      │◄─ webhook: complete ─┤◄──── complete ──────┤
+   │  "connected"          │                     │      "connected"     │
+   │◄──────────────────────┤─────────────────────┼─────────────────────►│
+   │  type + send            both sides send/receive Basic Messages     │
+   │  ◄───────────────────────────────────────────────────────────────► │
+```
 
 1. The portal asks ACA-Py for a new out-of-band invitation
    (`didexchange/1.0`, `auto_accept=true`) and stores a `ChatInvitation`
@@ -331,16 +382,33 @@ WiFi** as this PC.
 
 **Fastest path — install the prebuilt APK:**
 
-1. Copy an existing `app-release.apk` build into
-   [`portal/ssi/static/`](portal/ssi/static/) (the repo does not commit
-   this file — it's ~180 MB and gitignored).
-2. With the portal running, either:
-   - connect the phone by USB with `adb` and run
-     `adb install -r app-release.apk`, or
-   - open `http://<this-PC's-LAN-IP>:8000/static/<name>.apk` **in the
-     phone's browser** and download/install it directly — no cable needed.
-3. Point the wallet at your local mediator (writes `MEDIATOR_URL` into the
-   Bifold app's env):
+A prebuilt `bifold-wallet.apk` already ships in this checkout at
+[`portal/ssi/static/bifold-wallet.apk`](portal/ssi/static/bifold-wallet.apk)
+(it isn't committed to git — ~180 MB and gitignored — but it's on disk once
+you have the project). With the portal running (`run.py` or step 3.4), grab
+it one of two ways:
+
+- **On the phone itself** (same WiFi, no cable): open this link directly in
+  the phone's browser —
+
+  ```
+  http://<this-PC's-LAN-IP>:8000/static/bifold-wallet.apk
+  ```
+
+  e.g. `http://192.168.0.121:8000/static/bifold-wallet.apk` — swap in the
+  IP the agent prints at startup. It downloads and Android prompts to
+  install it (allow "install from unknown sources" if asked).
+- **Over USB**, with `adb`:
+  ```powershell
+  adb install -r "portal\ssi\static\bifold-wallet.apk"
+  ```
+
+If that file isn't present (fresh clone, nothing copied in yet), build one
+from source — see below — and drop it at that exact path to make the link
+above work.
+
+Then point the wallet at your local mediator (writes `MEDIATOR_URL` into
+the Bifold app's env):
 
    ```powershell
    .\.venv\Scripts\python.exe agent\mediator_invitation.py --write-env
