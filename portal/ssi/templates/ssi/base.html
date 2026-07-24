@@ -19,7 +19,9 @@
         <a href="{% url 'profile' %}"
            class="{% if request.resolver_match.url_name == 'profile' %}active{% endif %}">Profile</a>
         <a href="{% url 'messages' %}"
-           class="{% if 'messages' in request.resolver_match.url_name %}active{% endif %}">Messages</a>
+           class="{% if 'messages' in request.resolver_match.url_name %}active{% endif %}">Messages{% if pending_chat_requests %}
+          <span class="pill wait" style="margin-left:6px; padding:1px 7px; font-size:11px">{{ pending_chat_requests }}</span>
+        {% endif %}</a>
       {% endif %}
     </nav>
 
