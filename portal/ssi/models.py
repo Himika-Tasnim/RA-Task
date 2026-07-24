@@ -9,16 +9,6 @@ def short_token() -> str:
 
 
 class LedgerArtifacts(models.Model):
-    """
-    A schema + credential definition published to the ledger, one per role.
-
-    There is a separate schema for students and faculty rather than a shared
-    one, because a wallet names a credential card after its schema. Sharing a
-    schema means a holder carrying both credentials sees two identical cards and
-    cannot tell which to present at login.
-
-    Written by `manage.py ssi_setup`, read by issuance and login.
-    """
 
     role = models.CharField(max_length=20, unique=True)
     schema_id = models.CharField(max_length=255)
@@ -43,26 +33,11 @@ class LedgerArtifacts(models.Model):
 
     @classmethod
     def any(cls):
-        """Any published artifact, for 'is setup complete' checks."""
         return cls.objects.order_by("role").first()
 
 
 class MemberRecord(models.Model):
-    """
-    The university's own enrollment record -- what a self-service request at
-    `/request/` is checked against instead of a human reviewer. Covers both
-    students and faculty: there is no separate privileged "faculty issues
-    directly" path any more, so a faculty credential is just a MemberRecord
-    with role="faculty" going through the exact same pipeline.
-
-    Stands in for a real records system (admissions/SIS/HR). Seeded with
-    `manage.py seed_members`. A row starts unissued; once it's matched by a
-    verified self-service submission and a credential goes out, it's flipped
-    to issued so the same enrollment record can't be claimed a second time --
-    that's the real "already has a credential" guard, independent of whatever
-    IssuanceRequest bookkeeping happens to exist (which can be cleared by
-    `reset_demo` without this record becoming claimable again).
-    """
+   
 
     full_name = models.CharField(max_length=120)
     id_number = models.CharField(max_length=60, unique=True)
@@ -85,14 +60,7 @@ class MemberRecord(models.Model):
 
     @classmethod
     def find_match(cls, submitted: dict):
-        """
-        The unissued record matching all four submitted fields, or None.
-
-        Exact-on-all-four-fields deliberately: confirming "the ID exists but
-        the name is wrong" would let someone probe real ID numbers by trial
-        and error. Restricted to `issued=False` so a record already claimed
-        can never be matched again.
-        """
+        
         fields = ("full_name", "id_number", "department", "email")
         for record in cls.objects.filter(issued=False):
             if all(
@@ -104,19 +72,7 @@ class MemberRecord(models.Model):
 
 
 class IssuanceRequest(models.Model):
-    """
-    One member's credential being issued -- student or faculty, same pipeline.
-
-    Starts at `/request/` with no details yet, just a fresh connection
-    invitation (AWAITING_SCAN). Once the applicant's wallet connects
-    (CONNECTED), they submit their details on their own status page; the
-    portal checks those against `MemberRecord` (the seeded enrollment table)
-    and only a match gets issued. No human reviews these -- the registry
-    match is the gate, for everyone, regardless of role.
-
-    The connection webhook matches back to this row via `invitation_msg_id`.
-    """
-
+  
     STATE_AWAITING_SCAN = "awaiting_scan"
     STATE_CONNECTED = "connected"
     STATE_REJECTED = "rejected"
@@ -170,51 +126,7 @@ class IssuanceRequest(models.Model):
 
 
 class ChatInvitation(models.Model):
-    """
-    One connection attempt between one student and one faculty member, for
-    the messaging bonus feature -- TWO real DID Exchange (RFC 0023)
-    handshakes, not just a database flag.
-
-    A DIDComm connection is inherently pairwise -- one wallet, one agent.
-    The portal's agent is a single shared endpoint, so reaching two
-    different phones means forming two independent connections to it, one
-    per phone, not one connection that somehow serves both people:
-
-      `initiated_by_role` presses Connect and scans the resulting QR
-      (`invitation_*` / `connection_id`) with their own wallet -- same
-      shape as issuance and login. The OTHER party then presses Accept,
-      which creates a SECOND invitation (`counterparty_invitation_*` /
-      `counterparty_connection_id`) for THEM to scan with THEIR OWN wallet.
-      Only once both connections are active is there an actual path to
-      either person's phone, and only then does the chat reach CONNECTED.
-
-    Consent lives entirely on the portal, not in either wallet: Bifold (the
-    wallet this project targets) auto-accepts every connection with no
-    accept/decline screen of its own, so the invitation itself is created
-    with `auto_accept=true` on both sides (see `AcaPyClient.
-    create_chat_invitation`) -- the real gate is that the counterparty's
-    invitation is never created at all unless they explicitly press Accept
-    rather than Reject.
-
-    `student_id_number` + `faculty_id_number` identify the pair regardless
-    of who initiated, so both people's directory queries find the same row
-    (messaging is strictly one student <-> one faculty member, enforced by
-    `_counterparty_or_404`).
-
-    States, in order: AWAITING_SCAN (invitation created, the initiator
-    hasn't scanned it yet) -> REQUESTED (the initiator's connection is
-    active; sits here until the other party decides) -> COUNTERPARTY_SCAN
-    (the other party pressed Accept and now has their own invitation to
-    scan) -> CONNECTED (both connections are active -- two real, usable
-    DIDComm connections, one per phone). REJECTED/CANCELLED/DISCONNECTED/
-    ERROR are all terminal and all equally clear the way for a fresh
-    Connect, but mean different things: REJECTED is the other party
-    explicitly declining a pending request or backing out before finishing
-    their own scan; CANCELLED is the sender giving up on one sitting
-    unanswered and sending a new one instead (`messages_resend`);
-    DISCONNECTED is either party deliberately ending a working connection
-    (`messages_disconnect`); ERROR is the protocol itself failing.
-    """
+   
 
     STATE_AWAITING_SCAN = "awaiting_scan"
     STATE_REQUESTED = "requested"
@@ -311,24 +223,7 @@ class LoginSession(models.Model):
 
 
 class BasicMessage(models.Model):
-    """
-    Bonus feature: 1-to-1 DIDComm messages between one student and one
-    faculty member, over the pair of dedicated connections their
-    `ChatInvitation` formed -- not the one either of them used to receive
-    their own credential. Reusing the issuance connection would let any two
-    issued members message each other the instant both hold a credential,
-    with no consent step; a separate `ChatInvitation` per pair is what
-    makes an explicit accept/reject the gate for messaging, not just for
-    issuance.
 
-    Keyed by `chat` + `sender_role` rather than a single `connection_id` +
-    `outgoing` flag: a chat now has TWO connection ids (one per phone, see
-    `ChatInvitation`), so "outgoing" is only meaningful relative to whoever
-    is looking -- `sender_role` records who actually sent it (`_on_
-    basic_message` sets it from whichever connection the webhook fired on;
-    `messages_send` sets it to the logged-in member's own role), and each
-    view derives "outgoing" for itself by comparing against its own role.
-    """
 
     chat = models.ForeignKey("ChatInvitation", on_delete=models.CASCADE, related_name="messages")
     sender_role = models.CharField(max_length=20)

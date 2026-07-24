@@ -1,23 +1,3 @@
-"""
-End-to-end verification of the SSI login flow -- no phone required.
-
-Drives the whole journey the way a student would, but with the software holder
-agent (agent/run_holder.py) standing in for the mobile wallet:
-
-    issue credential -> login via proof -> dashboard -> profile -> logout
-
-Use this to confirm the backend is correct. The actual demo recording should
-use a real phone wallet scanning the same QR codes; this script and the phone
-hit exactly the same endpoints.
-
-Prerequisites -- three processes already running:
-    python agent/run_agent.py                     (issuer/verifier, ports 8020/8021)
-    python agent/run_holder.py                    (holder,          ports 8030/8031)
-    python portal/manage.py runserver 0.0.0.0:8000
-
-Then:
-    python scripts/demo_end_to_end.py
-"""
 
 from __future__ import annotations
 

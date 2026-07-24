@@ -1,17 +1,4 @@
-"""
-University Portal views.
 
-The authentication story here has no passwords anywhere:
-
-  1. /issue/   -- the registrar issues a Student ID credential into a wallet.
-  2. /login/   -- the portal shows a QR-encoded proof request. The student
-                  presents their credential from the wallet.
-  3. ACA-Py verifies the presentation cryptographically against the credential
-     definition we published, and only then does `login_complete` create a
-     Django session.
-  4. /dashboard/ and /profile/ are served off that session -- no re-auth.
-  5. /logout/ flushes it.
-"""
 
 from __future__ import annotations
 
@@ -115,15 +102,7 @@ def _artifacts_or_redirect(request):
 
 
 def _active_id_number_conflict(id_number: str, exclude_pk=None) -> bool:
-    """
-    Is this id_number already live on another request?
-
-    Prevents two different people (or an attacker re-requesting on a real
-    person's id_number) ending up with rows sharing one id_number -- since
-    messaging reaches people by their IssuanceRequest.connection_id, a
-    collision there would mean two different physical wallets both "are"
-    that id_number, and messages meant for one could reach the other.
-    """
+    
     qs = IssuanceRequest.objects.filter(
         id_number=id_number, state__in=IssuanceRequest.ACTIVE_STATES
     )
@@ -133,15 +112,7 @@ def _active_id_number_conflict(id_number: str, exclude_pk=None) -> bool:
 
 
 def _counterparty_or_404(request, pk):
-    """
-    The IssuanceRequest for the other role's pk, or 404.
-
-    Messaging is meant strictly for one student and one faculty member to
-    reach each other. Without the role/state filter here, a logged-in student
-    could POST straight to a message-thread URL for another student's pk (pks
-    are small sequential ints) and open a conversation the directory never
-    would have offered.
-    """
+   
     me = request.session[SESSION_KEY]
     my_role = me.get("role", settings.ROLE_STUDENT)
     other_role = (
@@ -153,12 +124,7 @@ def _counterparty_or_404(request, pk):
 
 
 def _sync_issuance_state(req: IssuanceRequest) -> None:
-    """
-    Fallback poll of ACA-Py for one request's credential exchange.
-
-    Webhooks drive this normally; this is what keeps a status page moving if
-    the agent couldn't reach the portal's webhook endpoint.
-    """
+    
     if req.cred_ex_id and req.state != IssuanceRequest.STATE_ISSUED:
         try:
             record = AcaPyClient().get_credential_exchange(req.cred_ex_id)
@@ -170,15 +136,7 @@ def _sync_issuance_state(req: IssuanceRequest) -> None:
 
 
 def _chats_for_pair(me: dict, person: IssuanceRequest):
-    """
-    Every ChatInvitation between `me` and `person`, newest first.
-
-    Keyed by (student_id_number, faculty_id_number) rather than "whichever
-    role clicked Connect", so the same row is found from either side of the
-    conversation -- messaging is strictly one student <-> one faculty member
-    (see `_counterparty_or_404`), so that pair is a stable, direction-
-    independent identity for the chat.
-    """
+    
     my_role = me.get("role", settings.ROLE_STUDENT)
     if my_role == settings.ROLE_STUDENT:
         student_id_number, faculty_id_number = me["id_number"], person.id_number
@@ -190,12 +148,7 @@ def _chats_for_pair(me: dict, person: IssuanceRequest):
 
 
 def _latest_chat_for_pair(me: dict, person: IssuanceRequest):
-    """
-    The current connection attempt (if any) between `me` and `person`.
-
-    Only the newest row matters -- an older rejected/errored attempt stays
-    in the table as history but never blocks a fresh Connect.
-    """
+    
     return _chats_for_pair(me, person).first()
 
 
@@ -222,31 +175,9 @@ def home(request):
     )
 
 
-# ---------------------------------------------------------------------------
-# credential requests: connect first, then verify against the enrollment
-# registry -- no human reviewer, and no separate "faculty issues directly"
-# path. Everyone -- student or faculty -- goes through the same pipeline:
-#
-#   /request/ (click Start) --> invitation created, AWAITING_SCAN
-#     --> applicant scans, wallet connects --> CONNECTED
-#     --> applicant submits name/id/department/email on their status page
-#     --> checked against MemberRecord (seeded via `manage.py seed_members`)
-#           no unissued match -> stays CONNECTED, form re-shown with an error
-#           id already claimed -> REJECTED (terminal)
-#           match     -> credential offered -> OFFERED -> ISSUED, record
-#                        flipped to issued=True so it can't be reused. The
-#                        matched record's own `role` decides which credential
-#                        (student or faculty) gets issued.
-# ---------------------------------------------------------------------------
-def request_credential(request):
-    """
-    Public. No login -- an applicant has no credential to log in with yet.
 
-    GET shows the explainer + start button. POST creates the connection
-    invitation immediately, with no identity fields filled in -- those are
-    collected (and verified) only after the wallet connects, on the
-    /request/<token>/ status page.
-    """
+def request_credential(request):
+   
     if request.method == "POST":
         if not LedgerArtifacts.any():
             flash.error(
@@ -264,11 +195,7 @@ def request_credential(request):
             flash.error(request, f"Could not create the invitation: {exc}")
             return render(request, "ssi/request_credential.html")
 
-        # This is only which form of the request/status pages to show --
-        # "Student ID" vs "Faculty ID" wording -- not a trust decision.
-        # request_submit_details always overwrites it from the matched
-        # MemberRecord's own role before anything is issued, since only the
-        # registry (not the applicant) gets to say who they are.
+     
         role = request.POST.get("role")
         if role not in (settings.ROLE_STUDENT, settings.ROLE_FACULTY):
             role = settings.ROLE_STUDENT
@@ -286,12 +213,7 @@ def request_credential(request):
 
 
 def request_status(request, token):
-    """
-    Public, but scoped by an unguessable token rather than a sequential id --
-    the same pattern LoginSession and the /i/<token>/ invitation route use, so
-    this can be safely public without leaking one applicant's request to
-    another the way a small int pk would.
-    """
+    
     req = get_object_or_404(IssuanceRequest, token=token)
     context = {"req": req}
     if req.state == IssuanceRequest.STATE_AWAITING_SCAN and req.invitation_url:
@@ -305,7 +227,7 @@ def request_status(request, token):
 
 
 def request_status_poll(request, token):
-    """Polled by the status page: connected yet? offered? issued?"""
+    
     req = get_object_or_404(IssuanceRequest, token=token)
     _sync_issuance_state(req)
     return JsonResponse(
@@ -319,14 +241,7 @@ def request_status_poll(request, token):
 
 @require_POST
 def request_submit_details(request, token):
-    """
-    The applicant's name/id/department/email, checked against MemberRecord
-    -- the university's own (seeded) enrollment table, students and faculty
-    alike. A match is what stands in for a human approving the request; see
-    MemberRecord.find_match. The matched record's own `role` decides which
-    credential (student or faculty) gets issued -- the applicant never gets
-    to assert that themselves.
-    """
+    
     req = get_object_or_404(
         IssuanceRequest, token=token, state=IssuanceRequest.STATE_CONNECTED
     )
@@ -387,11 +302,7 @@ def request_submit_details(request, token):
         req.detail = str(exc)
     req.save(update_fields=["cred_ex_id", "state", "detail"])
 
-    # Mark the enrollment record claimed regardless of whether the ACA-Py
-    # call above succeeded -- an ACA-Py error here is an infrastructure
-    # hiccup on OUR side, not evidence the record is free to try again with;
-    # the applicant already proved they're this person. Can still be re-opened
-    # by hand (MemberRecord.issued = False) if genuinely needed.
+   
     record.issued = True
     record.issued_at = timezone.now()
     record.save(update_fields=["issued", "issued_at"])
@@ -469,12 +380,7 @@ def login_status(request, pres_ex_id):
 
 
 def login_complete(request, pres_ex_id):
-    """
-    Turn a verified presentation into a logged-in session.
-
-    Re-checks verification server-side rather than trusting the poller, so
-    hitting this URL directly can't fake a login.
-    """
+    
     session = get_object_or_404(LoginSession, pres_ex_id=pres_ex_id)
 
     if not session.verified:
@@ -520,17 +426,7 @@ def login_complete(request, pres_ex_id):
 
 
 def oob_invitation(request, token):
-    """
-    Resolve a short invitation URL to the actual out-of-band invitation.
-
-    A wallet that scans the compact QR lands here and reads the invitation as
-    JSON, which is the behaviour the out-of-band spec defines for shortened
-    URLs. Anything that isn't asking for JSON (a curious browser) gets bounced
-    to the full `oob=` URL instead so the invitation still resolves.
-
-    A chat has two invitations (see `ChatInvitation`), each with its own
-    token, so both `token` and `counterparty_token` are checked.
-    """
+    
     invitation_json, invitation_url = None, ""
 
     record = (
@@ -567,17 +463,7 @@ def logout_view(request):
 
 
 def _apply_presentation(session: LoginSession, record: dict) -> None:
-    """
-    Copy verification result + revealed attributes onto the LoginSession.
-
-    Two things to be careful about, both learned the hard way:
-
-    - A verified login is final. ACA-Py cleans up completed exchange records
-      and emits a follow-up webhook with state "deleted"; without this guard
-      that tidy-up would overwrite a good login with a failure.
-    - "deleted" therefore means "ACA-Py tidied up", not "the student was
-      rejected". Only "abandoned" is a real rejection.
-    """
+ 
     if session.verified:
         return
 
@@ -631,37 +517,7 @@ def profile(request):
     )
 
 
-# ---------------------------------------------------------------------------
-# bonus: 1-to-1 DIDComm messaging
-#
-# Messaging between a student and a faculty member runs over TWO dedicated
-# DID Exchange (RFC 0023) connections -- not the one either of them used to
-# receive their own credential, and not just one connection shared between
-# them. A DIDComm connection is inherently pairwise (one wallet, one agent),
-# and the portal's agent is a single shared endpoint, so reaching two
-# different phones means two independent connections to it, one per phone:
-#
-#   /messages/ (press Connect) --> invitation #1 created, AWAITING_SCAN
-#     --> shown to the person who pressed Connect -- they scan it with
-#         THEIR OWN wallet, same shape as issuance/login
-#     --> REQUESTED (their connection is active; the OTHER party decides)
-#           reject -> REJECTED (terminal; either side can Connect again)
-#           accept -> invitation #2 created, COUNTERPARTY_SCAN
-#             --> shown to the accepter -- they scan it with THEIR OWN wallet
-#             --> CONNECTED once #2 is also active: two real connections,
-#                 messaging enabled in both directions
-#
-# Consent lives entirely on the portal, not in either wallet: Bifold (the
-# wallet this project targets) auto-accepts every connection with no
-# accept/decline screen of its own, so both invitations use
-# `auto_accept=true` (see AcaPyClient.create_chat_invitation) and the real
-# gate is simply that invitation #2 is never created unless the counterparty
-# presses Accept.
-#
-# Either side can withdraw a request that's sitting unanswered and send a
-# fresh one (`messages_resend`), or end a working connection
-# (`messages_disconnect`).
-# ---------------------------------------------------------------------------
+#bonus
 @ssi_login_required
 def messages_page(request):
     """A directory of people you can message -- click straight into a thread."""
@@ -715,14 +571,7 @@ def messages_page(request):
 @ssi_login_required
 @require_POST
 def messages_start(request, pk):
-    """
-    Send a connection request to the selected person.
-
-    Blocked while a connection attempt is already in flight or connected;
-    always allowed again once the latest attempt was rejected, cancelled,
-    disconnected, or errored. Use `messages_resend` instead to replace one
-    that's still awaiting_scan/requested but sitting unanswered.
-    """
+    
     me = request.session[SESSION_KEY]
     person = _counterparty_or_404(request, pk)
     chat = _latest_chat_for_pair(me, person)
@@ -758,14 +607,7 @@ def _send_chat_invitation(me: dict, person: IssuanceRequest) -> ChatInvitation:
 
 
 def _send_counterparty_invitation(chat: ChatInvitation, person: IssuanceRequest) -> None:
-    """
-    Create the counterparty's own invitation for THEM to scan.
-
-    `person` here is the initiator, from the accepter's point of view (that
-    is what `_counterparty_or_404` returns for whoever is calling this).
-    Moves the chat to COUNTERPARTY_SCAN -- `_on_connection` promotes it the
-    rest of the way to CONNECTED once this second connection goes active.
-    """
+    
     invitation = AcaPyClient().create_chat_invitation(alias=f"Chat with {person.full_name}")
     chat.counterparty_invitation_msg_id = invitation.get("invi_msg_id", "")
     chat.counterparty_invitation_url = invitation.get("invitation_url", "")
@@ -786,18 +628,7 @@ def _send_counterparty_invitation(chat: ChatInvitation, person: IssuanceRequest)
 @ssi_login_required
 @require_POST
 def messages_resend(request, pk):
-    """
-    Get a new QR when one's sitting unscanned -- for a wallet that never
-    scanned, lost connectivity, scanned the wrong thing, or a request just
-    sitting too long.
-
-    From COUNTERPARTY_SCAN, the accepter can ask for a fresh invitation of
-    their own without disturbing the initiator's already-active connection.
-    From AWAITING_SCAN or REQUESTED, EITHER party can restart the whole
-    exchange from scratch -- not restricted to the original sender, since
-    whoever is stuck looking at a dead end should be able to get things
-    moving again without needing the other person to do anything first.
-    """
+   
     me = request.session[SESSION_KEY]
     my_role = me.get("role", settings.ROLE_STUDENT)
     person = _counterparty_or_404(request, pk)
@@ -907,11 +738,7 @@ def messages_status(request, pk):
 @ssi_login_required
 @require_POST
 def messages_accept(request, pk):
-    """
-    The receiving party accepts a pending connection request by generating
-    their OWN invitation to scan -- see the module docstring above for why
-    this needs a second, independent connection rather than a bare flag.
-    """
+    
     me = request.session[SESSION_KEY]
     my_role = me.get("role", settings.ROLE_STUDENT)
     person = _counterparty_or_404(request, pk)
@@ -934,10 +761,7 @@ def messages_accept(request, pk):
 @ssi_login_required
 @require_POST
 def messages_reject(request, pk):
-    """
-    The receiving party declines a pending connection request, or backs out
-    before finishing their own scan.
-    """
+    
     me = request.session[SESSION_KEY]
     my_role = me.get("role", settings.ROLE_STUDENT)
     person = _counterparty_or_404(request, pk)
@@ -967,17 +791,7 @@ def messages_reject(request, pk):
 @ssi_login_required
 @require_POST
 def messages_disconnect(request, pk):
-    """
-    End a working connection. Either party can do this.
-
-    There's no "goodbye" message in DID Exchange itself -- ending a
-    connection is a local decision each side makes about its own agent, so
-    this only removes both of OUR sides: the initiator's connection AND the
-    counterparty's (see `ChatInvitation` -- a chat is two connections, one
-    per phone). Each wallet keeps its own copy until it separately acts on
-    it, but any further message relayed down the now-deleted connection ids
-    will simply fail.
-    """
+    
     me = request.session[SESSION_KEY]
     person = _counterparty_or_404(request, pk)
     chat = _latest_chat_for_pair(me, person)
@@ -1002,15 +816,7 @@ def messages_disconnect(request, pk):
 @ssi_login_required
 @require_POST
 def messages_send(request, pk):
-    """
-    Send a message typed on the website.
-
-    Delivered straight to the RECIPIENT's own connection, not the sender's
-    -- each phone only ever receives what's sent down ITS OWN connection
-    (see `ChatInvitation`). A message typed directly on a wallet instead of
-    the website arrives here via `_on_basic_message`, which relays it the
-    same way in the other direction.
-    """
+  
     me = request.session[SESSION_KEY]
     my_role = me.get("role", settings.ROLE_STUDENT)
     person = _counterparty_or_404(request, pk)
@@ -1039,20 +845,7 @@ def messages_send(request, pk):
 # ---------------------------------------------------------------------------
 @csrf_exempt
 def webhook(request, topic):
-    """
-    ACA-Py POSTs protocol state changes here (configured via --webhook-url).
-
-    This is what makes the demo feel automatic: the moment a student's wallet
-    finishes connecting, we push the credential offer without anyone clicking.
-
-    SECURITY: this endpoint is a write path into login state, so it is
-    authenticated with a shared secret ACA-Py appends to its webhook URL as
-    `#<key>` and sends as x-api-key. Left open, anyone able to reach the portal
-    could POST a fabricated "presentation verified" event -- with the
-    pres_ex_id lifted straight out of the public login page -- and log in as
-    anyone they liked. `_on_presentation` additionally refuses to trust the
-    payload's own verification claim.
-    """
+   
     if request.method != "POST":
         return JsonResponse({"error": "POST only"}, status=405)
 
@@ -1093,21 +886,7 @@ _CHAT_NONTERMINAL = (
 
 
 def _on_connection(payload: dict) -> None:
-    """
-    A DID-exchange connection changed state.
-
-    Issuance connections auto-accept (see AcaPyClient.create_connection_
-    invitation), so for those we only ever care about the terminal state:
-    mark CONNECTED and stop; `request_submit_details` does the registry
-    check and issues once the applicant submits their details.
-
-    A chat is two independent connections, one per phone (see
-    `ChatInvitation`), both auto-accepting the instant their owner scans.
-    This fires once per connection, so it may match either the initiator's
-    `invitation_msg_id` or the counterparty's `counterparty_invitation_msg_id`
-    -- whichever matches, that side's connection_id is recorded, and the
-    chat only reaches CONNECTED once BOTH sides are active.
-    """
+   
     state = payload.get("state")
     invitation_msg_id = payload.get("invitation_msg_id")
     connection_id = payload.get("connection_id")
@@ -1180,15 +959,7 @@ def _on_credential(payload: dict) -> None:
 
 
 def _on_presentation(payload: dict) -> None:
-    """
-    A presentation exchange changed state.
-
-    The payload is treated purely as a *notification*: the authoritative record
-    is re-fetched from ACA-Py's admin API, which is itself protected by the
-    admin key. So even a webhook that somehow reached us with a forged
-    "verified": "true" cannot create a login -- the only thing that counts is
-    what the agent says when we ask it directly.
-    """
+    
     pres_ex_id = payload.get("pres_ex_id")
     if not pres_ex_id:
         return
@@ -1208,14 +979,7 @@ def _on_presentation(payload: dict) -> None:
 
 
 def _on_basic_message(payload: dict) -> None:
-    """
-    A message arrived on one of a chat's two connections -- could be either
-    side's phone, sent from their wallet's own chat feature rather than the
-    website. Record it, then relay it onto the OTHER connection so the
-    other person's phone receives it too; the website textbox
-    (`messages_send`) already delivers straight to the recipient, so this
-    is only needed for wallet-to-wallet traffic.
-    """
+   
     connection_id = payload.get("connection_id")
     content = payload.get("content")
     if not connection_id or not content:

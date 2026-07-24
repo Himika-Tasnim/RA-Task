@@ -1,16 +1,4 @@
-"""
-Register the issuer's public DID on the BCovrin test ledger.
 
-Run this ONCE before starting the agent for the first time. It takes the
-AGENT_SEED from .env and asks BCovrin to write a DID for it with an ENDORSER
-role -- that role is what lets the agent later publish a schema and a
-credential definition.
-
-The seed deterministically derives the DID, so re-running this with the same
-seed is harmless: you get the same DID back.
-
-    python agent/register_did.py
-"""
 
 import json
 import os

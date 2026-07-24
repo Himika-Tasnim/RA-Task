@@ -1,21 +1,3 @@
-"""
-Wipe the phone wallet so the demo can start from "no credential".
-
-Why this exists: the demo is much more convincing if you first show that a
-student with no credential CANNOT log in, then issue one and show that they can.
-That needs an empty wallet, and Bifold's in-app credential removal is
-unreliable.
-
-Clearing the app's data resets the Askar wallet, every stored credential and
-every DIDComm connection. Bifold then starts at onboarding, so you set a new PIN
--- which actually looks better on camera, since the wallet is visibly new.
-
-Requires the phone connected over adb (USB or wireless debugging). Finds a
-wireless device automatically via mDNS if none is attached.
-
-    python scripts/reset_phone_wallet.py
-    python scripts/reset_phone_wallet.py --launch    # also open the app after
-"""
 
 from __future__ import annotations
 

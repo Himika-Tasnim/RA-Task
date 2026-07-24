@@ -1,29 +1,3 @@
-"""
-Negative tests: prove the portal rejects everything that isn't a valid,
-university-issued credential.
-
-`demo_end_to_end.py` shows the happy path works. That alone doesn't prove the
-login is *authentication* -- a portal that let anyone in would also pass it.
-These tests attack the login the ways it would actually be attacked:
-
-  1. Protected pages with no session at all
-  2. A forged presentation-exchange id in the login-complete URL
-  3. A real proof request that was never answered, replayed as if it had been
-  4. A credential from a DIFFERENT credential definition (wrong issuer)
-  5. Session actually destroyed by logout, not just redirected
-
-Test 4 is the important one. It temporarily removes the holder's genuine
-credentials, issues it one from an unrelated credential definition, and shows
-the login refuses it. The script restores a valid credential afterwards so the
-demo still works.
-
-Prerequisites -- the usual three processes:
-    python agent/run_agent.py
-    python agent/run_holder.py
-    python portal/manage.py runserver 0.0.0.0:8000
-
-    python scripts/test_security.py
-"""
 
 from __future__ import annotations
 

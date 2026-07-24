@@ -1,16 +1,3 @@
-"""
-Create the mediator invitation that Bifold needs, and write it into the app's
-.env as MEDIATOR_URL.
-
-Bifold will only accept an invitation as a mediator if it carries the goal code
-`aries.vc.mediate` -- that is how it distinguishes "connect to me as your
-mediator" from an ordinary connection invitation.
-
-Run this AFTER agent/run_mediator.py is up:
-
-    python agent/mediator_invitation.py
-    python agent/mediator_invitation.py --write-env    # also update Bifold's .env
-"""
 
 from __future__ import annotations
 

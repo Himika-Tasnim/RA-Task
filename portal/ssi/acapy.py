@@ -1,13 +1,4 @@
-"""
-Thin wrapper over the ACA-Py Admin API.
 
-Every SSI operation in this project -- creating the schema, publishing the
-credential definition, building invitations, issuing credentials and verifying
-presentations -- goes through ACA-Py via this client. The portal itself never
-touches keys, DIDs or the ledger directly.
-
-ACA-Py 0.12.x admin API reference: https://aca-py.org/0.12.1/
-"""
 
 from __future__ import annotations
 

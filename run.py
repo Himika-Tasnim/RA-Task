@@ -1,24 +1,3 @@
-"""
-Start everything the portal needs, from one terminal.
-
-This launches the same three long-running processes the README's "Quick
-start" has you run by hand in three separate terminals -- the ACA-Py
-issuer/verifier agent, the DIDComm mediator, and the Django portal -- waits
-for each to actually answer before starting the next, then streams all three
-logs here with a `[agent]` / `[mediator]` / `[portal]` prefix so you can see
-webhook activity next to the request that triggered it.
-
-Assumes one-time setup is already done: `agent/register_did.py`,
-`manage.py migrate`, `manage.py ssi_setup` (see SETUP_GUIDE.md). This script
-only starts processes -- it provisions nothing.
-
-    .\\.venv\\Scripts\\python.exe run.py
-
-Ctrl-C stops all three: they share this console, so the same Ctrl-C that
-interrupts this script also lands on each child directly, which is what lets
-aca-py's own KeyboardInterrupt-based shutdown run instead of a hard kill.
-Anything still alive a few seconds later gets terminated as a safety net.
-"""
 
 from __future__ import annotations
 

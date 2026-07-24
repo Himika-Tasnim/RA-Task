@@ -1,28 +1,4 @@
-"""
-A DIDComm mediator, run as a third ACA-Py instance.
 
-Why this exists: a phone has no public address, so it cannot receive DIDComm
-messages directly. Wallets solve this with a mediator -- a always-reachable
-agent that holds messages and forwards them. Bifold refuses to finish starting
-up without one.
-
-Bifold's README points at Indicio's public mediator, but its WebSocket host
-(ws.us-east.public.mediator.indiciotech.io) no longer resolves in DNS --
-verified against three independent resolvers. Credo prefers that WebSocket
-transport for mediation, so setup fails with "error 1045 ... initialize Context
-module in didcomm".
-
-Running our own fixes that and is strictly better for this demo:
-  - no dependency on a third-party service staying up
-  - no internet needed at all; phone and mediator are on the same WiFi
-  - one less thing to explain if it breaks during a recording
-
-    python agent/run_mediator.py
-
-Then generate the invitation the wallet needs:
-
-    python agent/mediator_invitation.py
-"""
 
 from __future__ import annotations
 

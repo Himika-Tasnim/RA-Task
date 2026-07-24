@@ -1,23 +1,4 @@
-"""
-Launcher for the ACA-Py agent.
 
-Why this exists instead of calling `aca-py start ...` directly:
-
-ACA-Py's `run_loop()` registers a SIGTERM handler with
-`loop.add_signal_handler()`. asyncio only implements that on Unix -- on Windows
-the Proactor event loop inherits `AbstractEventLoop.add_signal_handler`, which
-raises NotImplementedError, so `aca-py start` dies during startup. SIGTERM
-isn't a Windows signal in the first place, so making the registration a no-op
-loses nothing: Ctrl-C still shuts the agent down cleanly through the
-KeyboardInterrupt path that `run_loop()` already handles.
-
-Everything else about the agent is ordinary ACA-Py. This script also builds the
-command line from the project-root .env so the agent and the Django portal read
-their shared settings (ports, LAN IP, admin key) from one file.
-
-    python agent/run_agent.py            # normal start
-    python agent/run_agent.py --log-level debug   # extra args are passed through
-"""
 
 from __future__ import annotations
 

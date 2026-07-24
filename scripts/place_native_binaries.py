@@ -1,21 +1,4 @@
-"""
-Pre-populate Bifold's native crypto binaries from a local cache.
 
-Why this exists: @openwallet-foundation/askar-react-native,
-@hyperledger/anoncreds-react-native and @hyperledger/indy-vdr-react-native each
-download a ~100MB tarball of prebuilt Android/iOS libraries during `yarn
-install`. They use Node's fetch with no retry, so a single ECONNRESET on a
-flaky connection kills the whole install.
-
-Their installBinary.js skips the download when native/version.json already
-records the expected version. So we fetch the tarballs once with curl (which
-retries and resumes), then extract them into every copy node_modules created
-and write the matching version.json.
-
-Run from the bifold-wallet root after the tarballs are in CACHE:
-
-    node/python place_native_binaries.py
-"""
 
 import json
 import glob

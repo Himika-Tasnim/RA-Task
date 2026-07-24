@@ -1,21 +1,4 @@
-"""
-A second ACA-Py instance that plays the STUDENT'S WALLET (the holder).
 
-This exists for two reasons:
-
-  1. Testing. It lets `scripts/demo_end_to_end.py` drive the entire flow --
-     connect, receive a credential, present a proof, log in -- with no phone
-     involved, so the SSI plumbing can be verified on its own.
-  2. Fallback. If a mobile wallet can't be installed, this still demonstrates a
-     genuine holder: a separate agent, with its own wallet and its own keys,
-     that receives a real credential and produces a real presentation.
-
-It is NOT a replacement for the mobile wallet in the final demo -- the task
-asks for a phone scanning a QR code. Use this to prove the backend is correct,
-then point the phone at the same QR codes.
-
-    python agent/run_holder.py
-"""
 
 from __future__ import annotations
 
