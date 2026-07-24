@@ -20,11 +20,6 @@
            class="{% if request.resolver_match.url_name == 'profile' %}active{% endif %}">Profile</a>
         <a href="{% url 'messages' %}"
            class="{% if 'messages' in request.resolver_match.url_name %}active{% endif %}">Messages</a>
-        {# Issuing is faculty-only, so students never see the link. #}
-        {% if request.session.member.role == "faculty" %}
-          <a href="{% url 'issue' %}"
-             class="{% if 'issue' in request.resolver_match.url_name %}active{% endif %}">Issue</a>
-        {% endif %}
       {% endif %}
     </nav>
 
@@ -38,6 +33,8 @@
       <nav><a href="{% url 'logout' %}">Logout</a></nav>
     {% else %}
       <nav>
+        <a href="{% url 'request_credential' %}"
+           class="{% if request.resolver_match.url_name == 'request_credential' %}active{% endif %}">Request a credential</a>
         <a href="{% url 'login' %}"
            class="{% if request.resolver_match.url_name == 'login' %}active{% endif %}">Login</a>
       </nav>

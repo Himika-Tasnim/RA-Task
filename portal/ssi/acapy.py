@@ -134,14 +134,50 @@ class AcaPyClient:
     def get_connection(self, connection_id: str) -> Dict:
         return self.get(f"/connections/{connection_id}")
 
+    def create_chat_invitation(self, alias: str) -> Dict:
+        """
+        Out-of-band invitation for the 1-to-1 messaging feature.
+
+        Unlike `create_connection_invitation` above, this leaves the
+        resulting connection sitting in "request received" rather than
+        completing it automatically: messaging is meant to require the
+        invitation owner's explicit accept/reject (see
+        `accept_connection_request` / `reject_connection`), not just
+        whoever's wallet happens to scan the QR. `auto_accept=false` here
+        overrides the agent's own --auto-accept-requests default for this
+        one connection -- ACA-Py resolves per-invitation auto_accept ahead of
+        the global setting, so this reliably forces the manual step even
+        though issuance/login invitations on the same agent auto-accept.
+        """
+        return self.post(
+            "/out-of-band/create-invitation",
+            {
+                "alias": alias,
+                "handshake_protocols": [DIDEXCHANGE_V1],
+                "use_public_did": False,
+                "my_label": "Demo University Portal",
+            },
+            params={"auto_accept": "false"},
+        )
+
+    def accept_connection_request(self, connection_id: str) -> Dict:
+        """Manually complete a chat connection left pending by auto_accept=false."""
+        return self.post(f"/didexchange/{connection_id}/accept-request")
+
+    def reject_connection(self, connection_id: str, reason: str = "") -> Dict:
+        return self.post(f"/didexchange/{connection_id}/reject", {"reason": reason})
+
     # -- issuance ----------------------------------------------------------
     def issue_credential(
         self, connection_id: str, cred_def_id: str, attributes: Dict[str, str]
     ) -> Dict:
+        # The comment is what the wallet shows on the offer, so name the right
+        # credential rather than always saying "Student ID".
+        kind = "Faculty ID" if attributes.get("role") == "faculty" else "Student ID"
         payload = {
             "connection_id": connection_id,
             "auto_remove": False,
-            "comment": "Your Student ID credential from Demo University",
+            "comment": f"Your {kind} credential from Demo University",
             "credential_preview": {
                 "@type": "issue-credential/2.0/credential-preview",
                 "attributes": [
@@ -156,6 +192,55 @@ class AcaPyClient:
         return self.get(f"{ISSUE_CREDENTIAL_V2}/records/{cred_ex_id}")
 
     # -- proof / login -----------------------------------------------------
+    @staticmethod
+    def _presentation_request_payload(
+        issuer_did: str, attributes: List[str], name: str, comment: str
+    ) -> Dict:
+        """
+        The `presentation_request` body shared by both ways of asking for a
+        proof: connectionless (login, `create_proof_request`) and over an
+        existing connection (`send_proof_request`, chat identity checks).
+
+        All attributes are requested as a single *group* (`names`) rather than
+        one referent each, for two reasons:
+          - Security: a group forces every attribute to come from the SAME
+            credential. With separate referents a holder could satisfy each one
+            from a different credential.
+          - Size: one restriction block instead of four keeps the invitation
+            small enough to fit in a QR code a phone can actually scan.
+
+        A single restriction on issuer_did matches BOTH the student and the
+        faculty credential, since the university issued both.
+        #
+        # Listing one restriction per cred-def would be the obvious way to say
+        # "either of these", and AnonCreds does treat a restriction list as OR,
+        # but ACA-Py's holder-side auto-presentation cannot build a presentation
+        # from it -- verified by experiment: one cred_def_id restriction
+        # verifies, two produce "referent did not produce any credentials".
+        #
+        # issuer_did alone is looser than we want, since we can publish more
+        # than one cred-def under our own DID. `verify_cred_defs()` closes that
+        # gap by checking the presented cred-def against the allowed list after
+        # verification.
+        """
+        return {
+            "auto_verify": True,
+            "comment": comment,
+            "presentation_request": {
+                "indy": {
+                    "name": name,
+                    "version": "1.0",
+                    "requested_attributes": {
+                        "university_id": {
+                            "names": list(attributes),
+                            "restrictions": [{"issuer_did": issuer_did}],
+                        }
+                    },
+                    "requested_predicates": {},
+                }
+            },
+        }
+
     def create_proof_request(
         self,
         issuer_did: str,
@@ -169,46 +254,10 @@ class AcaPyClient:
         own cred_def_id is what makes this authentication rather than a
         self-asserted claim: only a credential this university actually issued
         can satisfy it.
-
-        All attributes are requested as a single *group* (`names`) rather than
-        one referent each, for two reasons:
-          - Security: a group forces every attribute to come from the SAME
-            credential. With separate referents a holder could satisfy each one
-            from a different credential.
-          - Size: one restriction block instead of four keeps the invitation
-            small enough to fit in a QR code a phone can actually scan.
         """
-        # A single restriction on issuer_did, which matches BOTH the student and
-        # the faculty credential because the university issued both.
-        #
-        # Listing one restriction per cred-def would be the obvious way to say
-        # "either of these", and AnonCreds does treat a restriction list as OR,
-        # but ACA-Py's holder-side auto-presentation cannot build a presentation
-        # from it -- verified by experiment: one cred_def_id restriction
-        # verifies, two produce "referent did not produce any credentials".
-        #
-        # issuer_did alone is looser than we want, since we can publish more
-        # than one cred-def under our own DID. `verify_cred_defs()` closes that
-        # gap by checking the presented cred-def against the allowed list after
-        # verification.
-        requested_attributes = {
-            "university_id": {
-                "names": list(attributes),
-                "restrictions": [{"issuer_did": issuer_did}],
-            }
-        }
-        payload = {
-            "auto_verify": True,
-            "comment": "Login to the University Portal",
-            "presentation_request": {
-                "indy": {
-                    "name": name,
-                    "version": "1.0",
-                    "requested_attributes": requested_attributes,
-                    "requested_predicates": {},
-                }
-            },
-        }
+        payload = self._presentation_request_payload(
+            issuer_did, attributes, name, "Login to the University Portal"
+        )
         return self.post(f"{PRESENT_PROOF_V2}/create-request", payload)
 
     def bind_proof_to_invitation(self, pres_ex_id: str) -> Dict:

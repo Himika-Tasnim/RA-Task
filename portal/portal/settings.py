@@ -147,10 +147,6 @@ WEBHOOK_API_KEY = os.getenv("WEBHOOK_API_KEY", "demo-webhook-api-key")
 # Student ID credential definition
 ROLE_STUDENT = "student"
 ROLE_FACULTY = "faculty"
-ROLE_CHOICES = [
-    (ROLE_STUDENT, "Student"),
-    (ROLE_FACULTY, "Faculty"),
-]
 
 # Attribute names are role-neutral: the same set describes a student and a
 # faculty member. Earlier versions used student_name/student_id, which read

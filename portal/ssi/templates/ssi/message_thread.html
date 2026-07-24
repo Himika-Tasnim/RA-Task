@@ -8,44 +8,7 @@
   {% if person.role == "faculty" %}Faculty{% else %}Student{% endif %}
 </p>
 
-{% if not chat %}
-  <div class="card">
-    <h2>Ask them to scan this</h2>
-    <p class="muted" style="margin-top:-4px">
-      This code is for <strong>{{ person.full_name }}</strong>. Once they scan
-      it with their wallet you'll have a direct connection and can message them.
-    </p>
-    {% if pending %}
-      <div class="qr">
-        <img src="{{ qr }}" alt="Connection invitation QR code">
-        <div class="muted" style="margin-top:10px">waiting for them to scan…</div>
-      </div>
-      <details style="margin-top:12px">
-        <summary class="muted">Can't scan? Show the URL</summary>
-        <p class="mono" style="margin-top:8px">{{ short_url }}</p>
-        <p class="muted">Full form:</p>
-        <p class="mono">{{ pending.invitation_url }}</p>
-      </details>
-    {% else %}
-      <form method="post" action="{% url 'messages_start' person.pk %}">
-        {% csrf_token %}
-        <button class="btn" type="submit">Generate QR</button>
-      </form>
-    {% endif %}
-  </div>
-
-  <script>
-    async function waitForConnection() {
-      try {
-        const res  = await fetch("{% url 'messages_status' person.pk %}");
-        const data = await res.json();
-        if (data.connected) { window.location.reload(); return; }
-      } catch (e) { /* keep trying */ }
-      setTimeout(waitForConnection, 2500);
-    }
-    waitForConnection();
-  </script>
-{% else %}
+{% if chat_state == "connected" %}
   <div class="card">
     <h2>Conversation <span class="pill ok" style="font-size:12px">connected</span></h2>
 
@@ -91,6 +54,100 @@
     const t = document.getElementById("thread");
     if (t) t.scrollTop = t.scrollHeight;
   </script>
+
+{% elif chat_state == "awaiting_my_decision" %}
+  <div class="card">
+    <h2>Connection request <span class="pill wait" style="font-size:12px">awaiting your decision</span></h2>
+    <p class="muted" style="margin-top:-4px">
+      <strong>{{ person.full_name }}</strong> scanned an invitation and is asking to
+      connect with you. Accepting forms a trusted DIDComm connection and lets you
+      message each other; rejecting leaves nothing connected.
+    </p>
+    <div style="margin-top:16px; display:flex; gap:10px">
+      <form method="post" action="{% url 'messages_accept' person.pk %}">
+        {% csrf_token %}
+        <button class="btn" type="submit">Accept</button>
+      </form>
+      <form method="post" action="{% url 'messages_reject' person.pk %}">
+        {% csrf_token %}
+        <button class="btn secondary" type="submit">Reject</button>
+      </form>
+    </div>
+  </div>
+  <script>
+    setTimeout(() => window.location.reload(), 4000);
+  </script>
+
+{% elif chat_state == "pending_their_decision" %}
+  <div class="card">
+    <h2>Connection request sent <span class="pill wait" style="font-size:12px">waiting</span></h2>
+    <p class="muted" style="margin-top:-4px">
+      Your wallet connected. <strong>{{ person.full_name }}</strong> now needs to
+      accept the request on their end before you can message each other.
+    </p>
+  </div>
+  <script>
+    setTimeout(() => window.location.reload(), 4000);
+  </script>
+
+{% elif chat_state == "awaiting_scan" %}
+  <div class="card">
+    <h2>Connect with {{ person.full_name }}</h2>
+    <p class="muted" style="margin-top:-4px">
+      Scan this invitation with your wallet to send a connection request to
+      <strong>{{ person.full_name }}</strong>. They'll need to accept it before
+      you can message each other.
+    </p>
+    <div class="qr">
+      <img src="{{ qr }}" alt="Chat invitation QR code">
+      <div class="muted" style="margin-top:10px">waiting for your wallet to scan…</div>
+    </div>
+    <details style="margin-top:12px">
+      <summary class="muted">Can't scan? Show the URL</summary>
+      <p class="mono" style="margin-top:8px">{{ short_url }}</p>
+    </details>
+  </div>
+  <script>
+    setTimeout(() => window.location.reload(), 4000);
+  </script>
+
+{% elif chat_state == "rejected" %}
+  <div class="card">
+    <h2>Connection declined</h2>
+    <p class="muted" style="margin-top:-4px">
+      The last connection request between you and <strong>{{ person.full_name }}</strong>
+      was declined. You can send a new one.
+    </p>
+    <form method="post" action="{% url 'messages_start' person.pk %}" style="margin-top:12px">
+      {% csrf_token %}
+      <button class="btn" type="submit">Connect again</button>
+    </form>
+  </div>
+
+{% elif chat_state == "error" %}
+  <div class="card">
+    <h2>Connection error</h2>
+    <p class="muted" style="margin-top:-4px">
+      Something went wrong forming a connection with <strong>{{ person.full_name }}</strong>.
+      You can try again.
+    </p>
+    <form method="post" action="{% url 'messages_start' person.pk %}" style="margin-top:12px">
+      {% csrf_token %}
+      <button class="btn" type="submit">Try again</button>
+    </form>
+  </div>
+
+{% else %}
+  <div class="card">
+    <h2>Not connected yet</h2>
+    <p class="muted" style="margin-top:-4px">
+      There is no messaging connection with <strong>{{ person.full_name }}</strong> yet.
+    </p>
+    <form method="post" action="{% url 'messages_start' person.pk %}" style="margin-top:12px">
+      {% csrf_token %}
+      <button class="btn" type="submit">Connect</button>
+    </form>
+  </div>
 {% endif %}
 
 <div class="card">

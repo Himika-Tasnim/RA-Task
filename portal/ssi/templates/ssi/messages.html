@@ -4,8 +4,9 @@
 {% block content %}
 <h1>Secure messages</h1>
 <p class="sub">
-  Pick someone to message. Each conversation runs over its own direct DIDComm
-  connection, encrypted end-to-end via the Basic Message protocol.
+  Pick someone to message. Connecting is a direct DIDComm request: you scan
+  their invitation from your wallet, and they have to accept it before any
+  messages can flow — reject it and nothing is ever exchanged.
 </p>
 
 <div class="card">
@@ -25,13 +26,25 @@
               <span class="pill ok">connected</span>
               <a class="btn" style="margin:0 0 0 10px; padding:7px 14px"
                  href="{% url 'messages_thread' entry.person.pk %}">Message</a>
+            {% elif entry.awaiting_my_decision %}
+              <span class="pill wait">wants to connect</span>
+              <a class="btn" style="margin:0 0 0 10px; padding:7px 14px"
+                 href="{% url 'messages_thread' entry.person.pk %}">Review request</a>
+            {% elif entry.pending_their_decision %}
+              <span class="pill wait">awaiting their consent</span>
+              <a class="btn secondary" style="margin:0 0 0 10px; padding:7px 14px"
+                 href="{% url 'messages_thread' entry.person.pk %}">View status</a>
+            {% elif entry.awaiting_scan %}
+              <span class="pill wait">waiting for scan</span>
+              <a class="btn secondary" style="margin:0 0 0 10px; padding:7px 14px"
+                 href="{% url 'messages_thread' entry.person.pk %}">View QR</a>
             {% else %}
-              <span class="pill wait">not connected</span>
+              <span class="pill err">not connected</span>
               <form method="post" action="{% url 'messages_start' entry.person.pk %}"
                     style="display:inline">
                 {% csrf_token %}
                 <button class="btn" style="margin:0 0 0 10px; padding:7px 14px" type="submit">
-                  Show QR
+                  Connect
                 </button>
               </form>
             {% endif %}
@@ -41,10 +54,10 @@
     </table>
   {% else %}
     <p class="muted">
-      Nobody to message yet. Issue a
-      {% if my_role == "faculty" %}student{% else %}faculty{% endif %}
-      credential from <a href="{% url 'issue' %}">Issue Credential</a> first —
-      people appear here once their credential has been accepted.
+      Nobody to message yet. A
+      {% if my_role == "faculty" %}student{% else %}faculty member{% endif %}
+      needs to <a href="{% url 'request_credential' %}">request a credential</a>
+      first — people appear here once their credential has been issued.
     </p>
   {% endif %}
 </div>
@@ -52,9 +65,9 @@
 <div class="card">
   <h2>How this works</h2>
   <ol class="steps">
-    <li>Pick a person and press <strong>Show QR</strong>.</li>
-    <li>They scan it with their wallet — that forms a direct connection between the two of you.</li>
-    <li>Once connected, type a message and it goes to that person only.</li>
+    <li>Press <strong>Connect</strong> and scan the invitation QR with your wallet — that sends a DIDComm connection request.</li>
+    <li>The other person sees <strong>Review request</strong> on their own Messages page and chooses to accept or reject it.</li>
+    <li>Only once they accept does a trusted connection exist, and messages can flow — either side can decline instead, and nothing is connected.</li>
   </ol>
 </div>
 {% endblock %}

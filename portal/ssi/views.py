@@ -44,6 +44,7 @@ from .models import (
     IssuanceRequest,
     LedgerArtifacts,
     LoginSession,
+    MemberRecord,
 )
 
 log = logging.getLogger(__name__)
@@ -101,55 +102,6 @@ def ssi_login_required(view):
     return wrapper
 
 
-def _my_chats(me):
-    """
-    Conversations belonging to the logged-in member only.
-
-    Threads are keyed by the id_number inside the presented credential, so one
-    member cannot read another pair's messages by guessing a person id.
-    """
-    return ChatInvitation.objects.filter(owner_id_number=me.get("id_number", ""))
-
-
-def registrar_required(view):
-    """
-    Only a faculty member may issue credentials.
-
-    Left open, anyone who could reach the portal could mint themselves a
-    *faculty* credential and then log in perfectly legitimately with it -- the
-    credential would be genuine, so no amount of proof verification downstream
-    would catch it. Issuance is the root of trust here and has to be gated.
-
-    Exception: while no faculty credential has ever been issued there is nobody
-    who *could* log in to authorise the first one, so the first issuance is
-    allowed to bootstrap. The page says so plainly when that applies.
-    """
-
-    @wraps(view)
-    def wrapper(request, *args, **kwargs):
-        member = request.session.get(SESSION_KEY) or {}
-        if member.get("role") == settings.ROLE_FACULTY:
-            return view(request, *args, **kwargs)
-
-        if not IssuanceRequest.objects.filter(
-            role=settings.ROLE_FACULTY, state=IssuanceRequest.STATE_ISSUED
-        ).exists():
-            # Bootstrap: no faculty exists yet, so allow the first issuance.
-            return view(request, *args, **kwargs)
-
-        flash.error(request, "Only faculty can issue credentials. Please log in.")
-        return redirect("login")
-
-    return wrapper
-
-
-def bootstrap_mode() -> bool:
-    """True while no faculty credential has been issued yet."""
-    return not IssuanceRequest.objects.filter(
-        role=settings.ROLE_FACULTY, state=IssuanceRequest.STATE_ISSUED
-    ).exists()
-
-
 def _artifacts_or_redirect(request):
     artifacts = LedgerArtifacts.any()
     if not artifacts:
@@ -159,6 +111,91 @@ def _artifacts_or_redirect(request):
             "`python manage.py ssi_setup` first.",
         )
     return artifacts
+
+
+def _active_id_number_conflict(id_number: str, exclude_pk=None) -> bool:
+    """
+    Is this id_number already live on another request?
+
+    Prevents two different people (or an attacker re-requesting on a real
+    person's id_number) ending up with rows sharing one id_number -- since
+    messaging reaches people by their IssuanceRequest.connection_id, a
+    collision there would mean two different physical wallets both "are"
+    that id_number, and messages meant for one could reach the other.
+    """
+    qs = IssuanceRequest.objects.filter(
+        id_number=id_number, state__in=IssuanceRequest.ACTIVE_STATES
+    )
+    if exclude_pk:
+        qs = qs.exclude(pk=exclude_pk)
+    return qs.exists()
+
+
+def _counterparty_or_404(request, pk):
+    """
+    The IssuanceRequest for the other role's pk, or 404.
+
+    Messaging is meant strictly for one student and one faculty member to
+    reach each other. Without the role/state filter here, a logged-in student
+    could POST straight to a message-thread URL for another student's pk (pks
+    are small sequential ints) and open a conversation the directory never
+    would have offered.
+    """
+    me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    other_role = (
+        settings.ROLE_STUDENT if my_role == settings.ROLE_FACULTY else settings.ROLE_FACULTY
+    )
+    return get_object_or_404(
+        IssuanceRequest, pk=pk, role=other_role, state=IssuanceRequest.STATE_ISSUED
+    )
+
+
+def _sync_issuance_state(req: IssuanceRequest) -> None:
+    """
+    Fallback poll of ACA-Py for one request's credential exchange.
+
+    Webhooks drive this normally; this is what keeps a status page moving if
+    the agent couldn't reach the portal's webhook endpoint.
+    """
+    if req.cred_ex_id and req.state != IssuanceRequest.STATE_ISSUED:
+        try:
+            record = AcaPyClient().get_credential_exchange(req.cred_ex_id)
+            if record.get("cred_ex_record", record).get("state") == "done":
+                req.state = IssuanceRequest.STATE_ISSUED
+                req.save(update_fields=["state"])
+        except AcaPyError:
+            pass
+
+
+def _chats_for_pair(me: dict, person: IssuanceRequest):
+    """
+    Every ChatInvitation between `me` and `person`, newest first.
+
+    Keyed by (student_id_number, faculty_id_number) rather than "whichever
+    role clicked Connect", so the same row is found from either side of the
+    conversation -- messaging is strictly one student <-> one faculty member
+    (see `_counterparty_or_404`), so that pair is a stable, direction-
+    independent identity for the chat.
+    """
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    if my_role == settings.ROLE_STUDENT:
+        student_id_number, faculty_id_number = me["id_number"], person.id_number
+    else:
+        student_id_number, faculty_id_number = person.id_number, me["id_number"]
+    return ChatInvitation.objects.filter(
+        student_id_number=student_id_number, faculty_id_number=faculty_id_number
+    ).order_by("-created_at")
+
+
+def _latest_chat_for_pair(me: dict, person: IssuanceRequest):
+    """
+    The current connection attempt (if any) between `me` and `person`.
+
+    Only the newest row matters -- an older rejected/errored attempt stays
+    in the table as history but never blocks a fresh Connect.
+    """
+    return _chats_for_pair(me, person).first()
 
 
 # ---------------------------------------------------------------------------
@@ -185,99 +222,180 @@ def home(request):
 
 
 # ---------------------------------------------------------------------------
-# issuance
+# credential requests: connect first, then verify against the enrollment
+# registry -- no human reviewer, and no separate "faculty issues directly"
+# path. Everyone -- student or faculty -- goes through the same pipeline:
+#
+#   /request/ (click Start) --> invitation created, AWAITING_SCAN
+#     --> applicant scans, wallet connects --> CONNECTED
+#     --> applicant submits name/id/department/email on their status page
+#     --> checked against MemberRecord (seeded via `manage.py seed_members`)
+#           no unissued match -> stays CONNECTED, form re-shown with an error
+#           id already claimed -> REJECTED (terminal)
+#           match     -> credential offered -> OFFERED -> ISSUED, record
+#                        flipped to issued=True so it can't be reused. The
+#                        matched record's own `role` decides which credential
+#                        (student or faculty) gets issued.
 # ---------------------------------------------------------------------------
-@registrar_required
-def issue_page(request):
-    return render(
-        request,
-        "ssi/issue.html",
-        {
-            "artifacts": _artifacts_or_redirect(request),
-            "role_choices": settings.ROLE_CHOICES,
-            "bootstrap": bootstrap_mode(),
-            "member": request.session.get(SESSION_KEY),
-        },
-    )
+def request_credential(request):
+    """
+    Public. No login -- an applicant has no credential to log in with yet.
 
+    GET shows the explainer + start button. POST creates the connection
+    invitation immediately, with no identity fields filled in -- those are
+    collected (and verified) only after the wallet connects, on the
+    /request/<token>/ status page.
+    """
+    if request.method == "POST":
+        if not LedgerArtifacts.any():
+            flash.error(
+                request,
+                "No credential definition is published yet. Ask an "
+                "administrator to run `python manage.py ssi_setup`.",
+            )
+            return render(request, "ssi/request_credential.html")
 
-@registrar_required
-@require_POST
-def issue_start(request):
-    artifacts = _artifacts_or_redirect(request)
-    if not artifacts:
-        return redirect("issue")
-
-    data = {k: request.POST.get(k, "").strip() for k in settings.SCHEMA_ATTRIBUTES}
-    data.setdefault("role", settings.ROLE_STUDENT)
-    if data["role"] not in dict(settings.ROLE_CHOICES):
-        data["role"] = settings.ROLE_STUDENT
-
-    missing = [k for k, v in data.items() if not v]
-    if missing:
-        flash.error(request, f"Please fill in: {', '.join(missing)}")
-        return redirect("issue")
-
-    client = AcaPyClient()
-    try:
-        invitation = client.create_connection_invitation(
-            alias=f"{data['full_name']} ({data['id_number']})"
-        )
-    except AcaPyError as exc:
-        flash.error(request, f"Could not create the invitation: {exc}")
-        return redirect("issue")
-
-    req = IssuanceRequest.objects.create(
-        full_name=data["full_name"],
-        id_number=data["id_number"],
-        department=data["department"],
-        email=data["email"],
-        role=data["role"],
-        invitation_msg_id=invitation.get("invi_msg_id", ""),
-        invitation_url=invitation.get("invitation_url", ""),
-        invitation_json=invitation.get("invitation", {}),
-    )
-    return redirect("issue_wait", pk=req.pk)
-
-
-def issue_wait(request, pk):
-    req = get_object_or_404(IssuanceRequest, pk=pk)
-    short_url = short_invitation_url(req.token)
-    return render(
-        request,
-        "ssi/issue_wait.html",
-        {
-            "req": req,
-            "qr_short": qr_data_uri(short_url),
-            "qr_full": qr_data_uri(req.invitation_url),
-            "short_url": short_url,
-        },
-    )
-
-
-def issue_status(request, pk):
-    """Polled by the issue_wait page while the student scans and accepts."""
-    req = get_object_or_404(IssuanceRequest, pk=pk)
-
-    # Webhooks drive this normally; poll ACA-Py as a fallback so the demo still
-    # works if the agent can't reach the portal's webhook endpoint.
-    if req.cred_ex_id and req.state != IssuanceRequest.STATE_ISSUED:
         try:
-            record = AcaPyClient().get_credential_exchange(req.cred_ex_id)
-            if record.get("cred_ex_record", record).get("state") == "done":
-                req.state = IssuanceRequest.STATE_ISSUED
-                req.save(update_fields=["state"])
-        except AcaPyError:
-            pass
+            invitation = AcaPyClient().create_connection_invitation(
+                alias="Credential applicant"
+            )
+        except AcaPyError as exc:
+            flash.error(request, f"Could not create the invitation: {exc}")
+            return render(request, "ssi/request_credential.html")
 
+        # This is only which form of the request/status pages to show --
+        # "Student ID" vs "Faculty ID" wording -- not a trust decision.
+        # request_submit_details always overwrites it from the matched
+        # MemberRecord's own role before anything is issued, since only the
+        # registry (not the applicant) gets to say who they are.
+        role = request.POST.get("role")
+        if role not in (settings.ROLE_STUDENT, settings.ROLE_FACULTY):
+            role = settings.ROLE_STUDENT
+
+        req = IssuanceRequest.objects.create(
+            role=role,
+            invitation_msg_id=invitation.get("invi_msg_id", ""),
+            invitation_url=invitation.get("invitation_url", ""),
+            invitation_json=invitation.get("invitation", {}),
+            detail="Waiting for your wallet to scan and connect.",
+        )
+        return redirect("request_status", token=req.token)
+
+    return render(request, "ssi/request_credential.html")
+
+
+def request_status(request, token):
+    """
+    Public, but scoped by an unguessable token rather than a sequential id --
+    the same pattern LoginSession and the /i/<token>/ invitation route use, so
+    this can be safely public without leaking one applicant's request to
+    another the way a small int pk would.
+    """
+    req = get_object_or_404(IssuanceRequest, token=token)
+    context = {"req": req}
+    if req.state == IssuanceRequest.STATE_AWAITING_SCAN and req.invitation_url:
+        short_url = short_invitation_url(req.token)
+        context.update(
+            qr_short=qr_data_uri(short_url),
+            qr_full=qr_data_uri(req.invitation_url),
+            short_url=short_url,
+        )
+    return render(request, "ssi/request_status.html", context)
+
+
+def request_status_poll(request, token):
+    """Polled by the status page: connected yet? offered? issued?"""
+    req = get_object_or_404(IssuanceRequest, token=token)
+    _sync_issuance_state(req)
     return JsonResponse(
         {
             "state": req.state,
             "detail": req.detail,
-            "full_name": req.full_name,
             "done": req.state == IssuanceRequest.STATE_ISSUED,
         }
     )
+
+
+@require_POST
+def request_submit_details(request, token):
+    """
+    The applicant's name/id/department/email, checked against MemberRecord
+    -- the university's own (seeded) enrollment table, students and faculty
+    alike. A match is what stands in for a human approving the request; see
+    MemberRecord.find_match. The matched record's own `role` decides which
+    credential (student or faculty) gets issued -- the applicant never gets
+    to assert that themselves.
+    """
+    req = get_object_or_404(
+        IssuanceRequest, token=token, state=IssuanceRequest.STATE_CONNECTED
+    )
+
+    submitted = {
+        k: request.POST.get(k, "").strip()
+        for k in ("full_name", "id_number", "department", "email")
+    }
+    if not all(submitted.values()):
+        flash.error(request, "Please fill in every field.")
+        return redirect("request_status", token=token)
+
+    record = MemberRecord.find_match(submitted)
+    if record is None:
+        flash.error(
+            request,
+            "Those details don't match an unissued record we have on file. "
+            "Check them and try again.",
+        )
+        return redirect("request_status", token=token)
+
+    if _active_id_number_conflict(record.id_number):
+        req.state = IssuanceRequest.STATE_REJECTED
+        req.detail = f"{record.id_number} already has an active or issued credential."
+        req.save(update_fields=["state", "detail"])
+        flash.error(request, "That ID number already has a credential in progress.")
+        return redirect("request_status", token=token)
+
+    artifacts = LedgerArtifacts.for_role(record.role)
+    if not artifacts:
+        flash.error(
+            request,
+            f"No credential definition published for role '{record.role}'. Try again shortly.",
+        )
+        return redirect("request_status", token=token)
+
+    # Use the record's own values, not the applicant's raw input, so the
+    # credential always carries what's on file regardless of stray casing or
+    # whitespace in what they typed.
+    req.full_name = record.full_name
+    req.id_number = record.id_number
+    req.department = record.department
+    req.email = record.email
+    req.role = record.role
+    req.save(update_fields=["full_name", "id_number", "department", "email", "role"])
+
+    try:
+        result = AcaPyClient().issue_credential(
+            connection_id=req.connection_id,
+            cred_def_id=artifacts.cred_def_id,
+            attributes=req.attributes(),
+        )
+        req.cred_ex_id = result.get("cred_ex_id", "")
+        req.state = IssuanceRequest.STATE_OFFERED
+        req.detail = "Verified against university records. Accept the offer in your wallet."
+    except AcaPyError as exc:
+        req.state = IssuanceRequest.STATE_ERROR
+        req.detail = str(exc)
+    req.save(update_fields=["cred_ex_id", "state", "detail"])
+
+    # Mark the enrollment record claimed regardless of whether the ACA-Py
+    # call above succeeded -- an ACA-Py error here is an infrastructure
+    # hiccup on OUR side, not evidence the record is free to try again with;
+    # the applicant already proved they're this person. Can still be re-opened
+    # by hand (MemberRecord.issued = False) if genuinely needed.
+    record.issued = True
+    record.issued_at = timezone.now()
+    record.save(update_fields=["issued", "issued_at"])
+
+    return redirect("request_status", token=token)
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +530,6 @@ def oob_invitation(request, token):
     record = (
         LoginSession.objects.filter(token=token).first()
         or IssuanceRequest.objects.filter(token=token).first()
-        or ChatInvitation.objects.filter(token=token).first()
     )
     if not record or not record.invitation_json:
         raise Http404("Unknown or expired invitation.")
@@ -498,17 +615,26 @@ def profile(request):
 
 # ---------------------------------------------------------------------------
 # bonus: 1-to-1 DIDComm messaging
+#
+# Messaging between a student and a faculty member runs over its own
+# dedicated connection, gated by mutual consent -- not the connection either
+# of them used to receive their own credential:
+#
+#   /messages/ (press Connect) --> chat invitation created, AWAITING_SCAN
+#     --> the other person's wallet scans it --> REQUESTED
+#     --> the PERSON WHO DID NOT CLICK CONNECT accepts or rejects it
+#           accept -> CONNECTED, messaging enabled
+#           reject -> REJECTED (terminal for that row; either side can
+#                     press Connect again to try afresh)
+#
+# `auto_accept=false` on the invitation (see AcaPyClient.create_chat_
+# invitation) is what makes the REQUESTED step real -- without it the
+# connection would complete the instant the QR is scanned, with no accept/
+# reject step for the receiving party at all.
 # ---------------------------------------------------------------------------
 @ssi_login_required
 def messages_page(request):
-    """
-    A directory of people you can message, not a QR generator.
-
-    A faculty member sees the students the university has issued to, a student
-    sees the faculty. Picking someone either opens the existing conversation or
-    shows a QR for them to scan -- so a message always goes to one named person
-    rather than "whoever scanned last".
-    """
+    """A directory of people you can message -- click straight into a thread."""
     me = request.session[SESSION_KEY]
     my_role = me.get("role", settings.ROLE_STUDENT)
     other_role = (
@@ -519,18 +645,25 @@ def messages_page(request):
     for person in IssuanceRequest.objects.filter(
         role=other_role, state=IssuanceRequest.STATE_ISSUED
     ).order_by("full_name"):
-        chat = _my_chats(me).filter(
-            counterparty=person, state=ChatInvitation.STATE_CONNECTED
-        ).first()
+        chat = _latest_chat_for_pair(me, person)
+        connected = bool(chat and chat.state == ChatInvitation.STATE_CONNECTED)
+        requested = bool(chat and chat.state == ChatInvitation.STATE_REQUESTED)
         directory.append(
             {
                 "person": person,
-                "connected": bool(chat),
                 "unread": BasicMessage.objects.filter(
                     connection_id=chat.connection_id, outgoing=False
-                ).count()
-                if chat
-                else 0,
+                ).count() if connected else 0,
+                "connected": connected,
+                # Someone scanned and it's on ME to accept/reject.
+                "awaiting_my_decision": requested and chat.initiated_by_role != my_role,
+                # I clicked Connect and I'm waiting on them.
+                "pending_their_decision": requested and chat.initiated_by_role == my_role,
+                "awaiting_scan": bool(
+                    chat
+                    and chat.state == ChatInvitation.STATE_AWAITING_SCAN
+                    and chat.initiated_by_role == my_role
+                ),
             }
         )
 
@@ -547,99 +680,169 @@ def messages_page(request):
 
 
 @ssi_login_required
-def messages_thread(request, pk):
-    """One conversation with one person."""
-    me = request.session[SESSION_KEY]
-    person = get_object_or_404(IssuanceRequest, pk=pk)
-
-    mine = _my_chats(me).filter(counterparty=person)
-    chat = mine.filter(state=ChatInvitation.STATE_CONNECTED).first()
-    pending = mine.filter(state=ChatInvitation.STATE_AWAITING_SCAN).first()
-
-    context = {
-        "member": me,
-        "person": person,
-        "chat": chat,
-        "pending": pending,
-        "thread": BasicMessage.objects.filter(connection_id=chat.connection_id)
-        if chat
-        else [],
-    }
-    if pending:
-        short_url = short_invitation_url(pending.token)
-        context["qr"] = qr_data_uri(short_url)
-        context["short_url"] = short_url
-    return render(request, "ssi/message_thread.html", context)
-
-
-@ssi_login_required
 @require_POST
 def messages_start(request, pk):
-    """Create (or reuse) a direct connection invitation for one specific person."""
-    me = request.session[SESSION_KEY]
-    person = get_object_or_404(IssuanceRequest, pk=pk)
+    """
+    Send a connection request to the selected person.
 
-    mine = _my_chats(me).filter(counterparty=person)
-    if mine.filter(
-        state__in=(ChatInvitation.STATE_CONNECTED, ChatInvitation.STATE_AWAITING_SCAN)
-    ).exists():
+    Blocked while a connection attempt is already in flight or connected;
+    always allowed again once the latest attempt was rejected or errored.
+    """
+    me = request.session[SESSION_KEY]
+    person = _counterparty_or_404(request, pk)
+    chat = _latest_chat_for_pair(me, person)
+    if chat and chat.state in (
+        ChatInvitation.STATE_AWAITING_SCAN,
+        ChatInvitation.STATE_REQUESTED,
+        ChatInvitation.STATE_CONNECTED,
+    ):
         return redirect("messages_thread", pk=pk)
 
     try:
-        invitation = AcaPyClient().create_connection_invitation(
-            alias=f"chat: {person.full_name} ({person.id_number})"
+        invitation = AcaPyClient().create_chat_invitation(
+            alias=f"Chat with {person.full_name}"
         )
     except AcaPyError as exc:
-        flash.error(request, f"Could not create the invitation: {exc}")
+        flash.error(request, f"Could not create the connection invitation: {exc}")
         return redirect("messages")
 
+    my_role = me.get("role", settings.ROLE_STUDENT)
     ChatInvitation.objects.create(
         label=person.full_name,
-        counterparty=person,
-        initiated_by_role=me.get("role", ""),
-        owner_id_number=me.get("id_number", ""),
         invitation_msg_id=invitation.get("invi_msg_id", ""),
         invitation_url=invitation.get("invitation_url", ""),
         invitation_json=invitation.get("invitation", {}),
+        student_id_number=me["id_number"] if my_role == settings.ROLE_STUDENT else person.id_number,
+        faculty_id_number=person.id_number if my_role == settings.ROLE_STUDENT else me["id_number"],
+        initiated_by_role=my_role,
     )
     return redirect("messages_thread", pk=pk)
 
 
 @ssi_login_required
+def messages_thread(request, pk):
+    """One conversation with one person, over their dedicated chat connection."""
+    me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    person = _counterparty_or_404(request, pk)
+    chat = _latest_chat_for_pair(me, person)
+
+    context = {"member": me, "person": person, "chat_state": "none"}
+
+    if chat and chat.state == ChatInvitation.STATE_CONNECTED:
+        context.update(
+            chat_state="connected",
+            thread=BasicMessage.objects.filter(connection_id=chat.connection_id),
+        )
+    elif chat and chat.state == ChatInvitation.STATE_REQUESTED:
+        if chat.initiated_by_role == my_role:
+            context["chat_state"] = "pending_their_decision"
+        else:
+            context["chat_state"] = "awaiting_my_decision"
+    elif (
+        chat
+        and chat.state == ChatInvitation.STATE_AWAITING_SCAN
+        and chat.initiated_by_role == my_role
+    ):
+        context.update(
+            chat_state="awaiting_scan",
+            short_url=short_invitation_url(chat.token),
+            qr=qr_data_uri(chat.invitation_url),
+        )
+    elif chat and chat.state == ChatInvitation.STATE_REJECTED:
+        context["chat_state"] = "rejected"
+    elif chat and chat.state == ChatInvitation.STATE_ERROR:
+        context["chat_state"] = "error"
+
+    return render(request, "ssi/message_thread.html", context)
+
+
+@ssi_login_required
 def messages_status(request, pk):
-    """Polled while waiting for a scan, and for new incoming messages."""
-    person = get_object_or_404(IssuanceRequest, pk=pk)
-    chat = _my_chats(request.session[SESSION_KEY]).filter(
-        counterparty=person, state=ChatInvitation.STATE_CONNECTED
-    ).first()
+    """Polled for connection-state changes and new incoming messages."""
+    me = request.session[SESSION_KEY]
+    person = _counterparty_or_404(request, pk)
+    chat = _latest_chat_for_pair(me, person)
+    connected = bool(chat and chat.state == ChatInvitation.STATE_CONNECTED)
+    message_count = (
+        BasicMessage.objects.filter(connection_id=chat.connection_id).count()
+        if connected
+        else 0
+    )
     return JsonResponse(
         {
-            "connected": bool(chat),
-            "message_count": BasicMessage.objects.filter(
-                connection_id=chat.connection_id
-            ).count()
-            if chat
-            else 0,
+            "state": chat.state if chat else "none",
+            "message_count": message_count,
         }
     )
 
 
 @ssi_login_required
 @require_POST
-def messages_send(request, pk):
-    person = get_object_or_404(IssuanceRequest, pk=pk)
-    chat = _my_chats(request.session[SESSION_KEY]).filter(
-        counterparty=person, state=ChatInvitation.STATE_CONNECTED
-    ).first()
-    content = request.POST.get("content", "").strip()
+def messages_accept(request, pk):
+    """The receiving party accepts a pending connection request."""
+    me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    person = _counterparty_or_404(request, pk)
+    chat = _latest_chat_for_pair(me, person)
 
-    if not chat:
-        flash.error(request, f"{person.full_name} has not connected yet.")
-    elif content:
+    if not chat or chat.state != ChatInvitation.STATE_REQUESTED or chat.initiated_by_role == my_role:
+        flash.error(request, "There is no pending connection request to accept.")
+        return redirect("messages_thread", pk=pk)
+
+    try:
+        AcaPyClient().accept_connection_request(chat.connection_id)
+    except AcaPyError as exc:
+        flash.error(request, f"Could not accept the connection: {exc}")
+        return redirect("messages_thread", pk=pk)
+
+    flash.success(request, f"Connected with {person.full_name}.")
+    return redirect("messages_thread", pk=pk)
+
+
+@ssi_login_required
+@require_POST
+def messages_reject(request, pk):
+    """The receiving party declines a pending connection request."""
+    me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    person = _counterparty_or_404(request, pk)
+    chat = _latest_chat_for_pair(me, person)
+
+    if not chat or chat.state != ChatInvitation.STATE_REQUESTED or chat.initiated_by_role == my_role:
+        flash.error(request, "There is no pending connection request to reject.")
+        return redirect("messages_thread", pk=pk)
+
+    try:
+        AcaPyClient().reject_connection(chat.connection_id, reason="Declined by the recipient.")
+    except AcaPyError:
+        pass  # best effort -- still mark it rejected locally so a retry isn't blocked
+
+    chat.state = ChatInvitation.STATE_REJECTED
+    chat.save(update_fields=["state"])
+    flash.success(request, f"Declined the connection request from {person.full_name}.")
+    return redirect("messages_thread", pk=pk)
+
+
+@ssi_login_required
+@require_POST
+def messages_send(request, pk):
+    me = request.session[SESSION_KEY]
+    person = _counterparty_or_404(request, pk)
+    content = request.POST.get("content", "").strip()
+    chat = _latest_chat_for_pair(me, person)
+
+    if not chat or chat.state != ChatInvitation.STATE_CONNECTED or not chat.connection_id:
+        flash.error(request, "That person is not connected for messaging yet.")
+        return redirect("messages_thread", pk=pk)
+
+    if content:
         try:
             AcaPyClient().send_basic_message(chat.connection_id, content)
             BasicMessage.objects.create(
-                connection_id=chat.connection_id, content=content, outgoing=True
+                connection_id=chat.connection_id,
+                content=content,
+                outgoing=True,
             )
         except AcaPyError as exc:
             flash.error(request, f"Could not send: {exc}")
@@ -698,56 +901,70 @@ def webhook(request, topic):
 
 
 def _on_connection(payload: dict) -> None:
-    """Student scanned the issuance QR and the connection came up -> issue."""
-    if payload.get("state") not in ("active", "completed"):
-        return
+    """
+    A DID-exchange connection changed state.
 
+    Issuance connections auto-accept (see AcaPyClient.create_connection_
+    invitation), so for those we only ever care about the terminal state:
+    mark CONNECTED and stop; `request_submit_details` does the registry
+    check and issues once the applicant submits their details.
+
+    Chat connections auto_accept=false instead (see AcaPyClient.
+    create_chat_invitation), so they pass through an extra "request" state
+    that issuance never lingers on -- that is the scan having landed, now
+    awaiting the invitation owner's accept/reject in `messages_accept` /
+    `messages_reject`. Only once THAT happens does ACA-Py move it on to
+    active/completed.
+    """
+    state = payload.get("state")
     invitation_msg_id = payload.get("invitation_msg_id")
     connection_id = payload.get("connection_id")
     if not invitation_msg_id or not connection_id:
         return
 
-    # A messaging connection (bonus feature) carries no credential -- record it
-    # and stop, so we don't try to issue anything down it.
-    chat = ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id).first()
-    if chat:
-        chat.connection_id = connection_id
-        chat.their_label = payload.get("their_label", "") or ""
-        chat.state = ChatInvitation.STATE_CONNECTED
-        chat.save(update_fields=["connection_id", "their_label", "state"])
-        return
+    if state in ("active", "completed"):
+        req = IssuanceRequest.objects.filter(
+            invitation_msg_id=invitation_msg_id,
+            state=IssuanceRequest.STATE_AWAITING_SCAN,
+        ).first()
+        if req:
+            req.connection_id = connection_id
+            req.state = IssuanceRequest.STATE_CONNECTED
+            req.detail = "Connected. Enter your details to continue."
+            req.save(update_fields=["connection_id", "state", "detail"])
+            return
 
-    req = IssuanceRequest.objects.filter(
-        invitation_msg_id=invitation_msg_id,
-        state=IssuanceRequest.STATE_AWAITING_SCAN,
-    ).first()
-    if not req:
-        return
-
-    req.connection_id = connection_id
-    req.state = IssuanceRequest.STATE_CONNECTED
-    req.save(update_fields=["connection_id", "state"])
-
-    artifacts = LedgerArtifacts.for_role(req.role)
-    if not artifacts:
-        req.state = IssuanceRequest.STATE_ERROR
-        req.detail = f"No credential definition published for role '{req.role}'."
-        req.save(update_fields=["state", "detail"])
-        return
-
-    try:
-        result = AcaPyClient().issue_credential(
-            connection_id=connection_id,
-            cred_def_id=artifacts.cred_def_id,
-            attributes=req.attributes(),
+        chat = (
+            ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id)
+            .exclude(state=ChatInvitation.STATE_REJECTED)
+            .first()
         )
-        req.cred_ex_id = result.get("cred_ex_id", "")
-        req.state = IssuanceRequest.STATE_OFFERED
-        req.detail = "Credential offered - accept it in your wallet."
-    except AcaPyError as exc:
-        req.state = IssuanceRequest.STATE_ERROR
-        req.detail = str(exc)
-    req.save(update_fields=["cred_ex_id", "state", "detail"])
+        if chat:
+            chat.connection_id = connection_id
+            chat.state = ChatInvitation.STATE_CONNECTED
+            chat.save(update_fields=["connection_id", "state"])
+        return
+
+    if state == "request":
+        chat = ChatInvitation.objects.filter(
+            invitation_msg_id=invitation_msg_id,
+            state=ChatInvitation.STATE_AWAITING_SCAN,
+        ).first()
+        if chat:
+            chat.connection_id = connection_id
+            chat.state = ChatInvitation.STATE_REQUESTED
+            chat.save(update_fields=["connection_id", "state"])
+        return
+
+    if state in ("error", "abandoned"):
+        chat = (
+            ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id)
+            .exclude(state__in=(ChatInvitation.STATE_CONNECTED, ChatInvitation.STATE_REJECTED))
+            .first()
+        )
+        if chat:
+            chat.state = ChatInvitation.STATE_ERROR
+            chat.save(update_fields=["state"])
 
 
 def _on_credential(payload: dict) -> None:
@@ -783,6 +1000,7 @@ def _on_presentation(payload: dict) -> None:
     pres_ex_id = payload.get("pres_ex_id")
     if not pres_ex_id:
         return
+
     session = LoginSession.objects.filter(pres_ex_id=pres_ex_id).first()
     if not session:
         return
@@ -791,8 +1009,9 @@ def _on_presentation(payload: dict) -> None:
         record = AcaPyClient().get_presentation_exchange(pres_ex_id)
     except AcaPyError:
         # Record already cleaned up, or the agent is briefly unreachable. The
-        # login page's poll will retry; never fall back to the payload.
+        # polling fallback will retry; never fall back to the payload.
         return
+
     _apply_presentation(session, record)
 
 

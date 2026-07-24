@@ -5,11 +5,14 @@ from . import views
 urlpatterns = [
     path("", views.home, name="home"),
 
-    # Issuance (registrar side)
-    path("issue/", views.issue_page, name="issue"),
-    path("issue/start/", views.issue_start, name="issue_start"),
-    path("issue/<int:pk>/", views.issue_wait, name="issue_wait"),
-    path("issue/<int:pk>/status/", views.issue_status, name="issue_status"),
+    # Credential requests: connect first, then verify details against the
+    # enrollment registry (see models.MemberRecord). Students and faculty
+    # both go through this same pipeline -- there is no separate direct-
+    # issue path.
+    path("request/", views.request_credential, name="request_credential"),
+    path("request/<str:token>/", views.request_status, name="request_status"),
+    path("request/<str:token>/status/", views.request_status_poll, name="request_status_poll"),
+    path("request/<str:token>/submit/", views.request_submit_details, name="request_submit_details"),
 
     # Login by verifiable presentation
     path("login/", views.login_page, name="login"),
@@ -21,10 +24,12 @@ urlpatterns = [
     path("dashboard/", views.dashboard, name="dashboard"),
     path("profile/", views.profile, name="profile"),
 
-    # Bonus: 1-to-1 DIDComm messaging, addressed to a specific person
+    # Bonus: 1-to-1 DIDComm messaging over a dedicated, mutual-consent connection
     path("messages/", views.messages_page, name="messages"),
-    path("messages/<int:pk>/", views.messages_thread, name="messages_thread"),
     path("messages/<int:pk>/start/", views.messages_start, name="messages_start"),
+    path("messages/<int:pk>/accept/", views.messages_accept, name="messages_accept"),
+    path("messages/<int:pk>/reject/", views.messages_reject, name="messages_reject"),
+    path("messages/<int:pk>/", views.messages_thread, name="messages_thread"),
     path("messages/<int:pk>/status/", views.messages_status, name="messages_status"),
     path("messages/<int:pk>/send/", views.messages_send, name="messages_send"),
 

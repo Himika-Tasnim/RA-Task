@@ -1,0 +1,116 @@
+{% extends "ssi/base.html" %}
+{% block title %}Your request{% endblock %}
+
+{% block content %}
+<h1>Your {% if req.role == "faculty" %}Faculty ID{% else %}Student ID{% endif %} request</h1>
+{% if req.full_name %}
+  <p class="sub">{{ req.full_name }} &middot; {{ req.id_number }} &middot; {{ req.department }}</p>
+{% else %}
+  <p class="sub">Not yet identified — enter your details once connected.</p>
+{% endif %}
+
+<div class="card">
+  {% if req.state == "awaiting_scan" and qr_short %}
+    <h2>Scan to connect</h2>
+    <div class="qr">
+      <img id="qr-short" src="{{ qr_short }}" alt="Connection invitation QR code">
+      <img id="qr-full"  src="{{ qr_full }}"  alt="Connection invitation QR code (full)" style="display:none">
+      <div class="muted" style="margin-top:10px">
+        <span id="qr-mode">Compact QR</span> &middot;
+        <a href="#" id="qr-toggle">wallet didn't recognise it? switch</a>
+      </div>
+    </div>
+    <ol class="steps" style="margin-top:18px">
+      <li>Open your wallet app and scan this code.</li>
+      <li>Accept the connection with <em>Demo University</em>.</li>
+      <li>This page will move on to asking for your details.</li>
+    </ol>
+    <details style="margin-top:10px">
+      <summary class="muted">Can't scan? Show the invitation URLs</summary>
+      <p class="muted" style="margin-top:8px">Short form:</p>
+      <p class="mono">{{ short_url }}</p>
+      <p class="muted">Full form:</p>
+      <p class="mono">{{ req.invitation_url }}</p>
+    </details>
+    <script>
+      document.getElementById("qr-toggle").addEventListener("click", (e) => {
+        e.preventDefault();
+        const short = document.getElementById("qr-short");
+        const full  = document.getElementById("qr-full");
+        const showingShort = short.style.display !== "none";
+        short.style.display = showingShort ? "none" : "";
+        full.style.display  = showingShort ? "" : "none";
+        document.getElementById("qr-mode").textContent =
+          showingShort ? "Full QR" : "Compact QR";
+      });
+    </script>
+
+  {% elif req.state == "connected" %}
+    <h2>Wallet connected — who are you?</h2>
+    <span class="pill ok">connected</span>
+    <p class="muted" style="margin-top:14px">
+      Enter your details exactly as the university has them on file.
+    </p>
+    <form method="post" action="{% url 'request_submit_details' req.token %}" style="margin-top:10px">
+      {% csrf_token %}
+      <label for="full_name">Full name</label>
+      <input type="text" id="full_name" name="full_name" placeholder="Ayesha Rahman" required>
+
+      <label for="id_number">{% if req.role == "faculty" %}Faculty ID{% else %}Student ID{% endif %} number</label>
+      <input type="text" id="id_number" name="id_number"
+             placeholder="{% if req.role == 'faculty' %}FAC-001{% else %}STU-001{% endif %}" required>
+
+      <label for="department">Department</label>
+      <input type="text" id="department" name="department" placeholder="Software Engineering" required>
+
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="ayesha@university.edu" required>
+
+      <button class="btn" type="submit">Verify and request my credential</button>
+    </form>
+
+  {% elif req.state == "rejected" %}
+    <h2>Not issued</h2>
+    <span class="pill err">rejected</span>
+    <p class="muted" style="margin-top:14px">{{ req.detail }}</p>
+    <a class="btn" href="{% url 'request_credential' %}">Start a new request</a>
+
+  {% elif req.state == "offered" %}
+    <h2>Credential offered</h2>
+    <span class="pill wait">accept it in your wallet</span>
+    <p class="muted" style="margin-top:14px">{{ req.detail }}</p>
+
+  {% elif req.state == "issued" %}
+    <h2>&#9989; Credential issued</h2>
+    <span class="pill ok">done</span>
+    <p class="muted" style="margin-top:14px">
+      Your {% if req.role == "faculty" %}Faculty ID{% else %}Student ID{% endif %}
+      credential is now held in your wallet.
+    </p>
+    <a class="btn" href="{% url 'login' %}">Continue to login</a>
+
+  {% else %}
+    <h2>Something went wrong</h2>
+    <span class="pill err">error</span>
+    <p class="muted" style="margin-top:14px">{{ req.detail }}</p>
+  {% endif %}
+</div>
+
+{% if req.state != "issued" and req.state != "rejected" %}
+<script>
+  // States that need a fresh render (a QR appearing, the details form
+  // appearing) just reload; the flow only moves forward a handful of times
+  // so this is simpler than patching the DOM in place.
+  const known = "{{ req.state }}";
+  async function poll() {
+    try {
+      const res  = await fetch("{% url 'request_status_poll' req.token %}");
+      const data = await res.json();
+      if (data.state !== known) { window.location.reload(); return; }
+    } catch (e) { /* keep trying */ }
+    setTimeout(poll, 2500);
+  }
+  poll();
+</script>
+{% endif %}
+{% endblock %}

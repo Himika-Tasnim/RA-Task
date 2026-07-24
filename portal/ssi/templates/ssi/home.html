@@ -43,12 +43,18 @@
 <div class="card">
   <h2>How the demo runs</h2>
   <ol class="steps">
-    <li>Registrar issues a <strong>Student ID</strong> or <strong>Faculty ID</strong> credential &mdash; the holder scans the QR with their wallet and accepts it.</li>
-    <li>The holder opens <strong>Login</strong>, scans the proof-request QR, and presents the credential.</li>
+    <li>A prospective student clicks <strong>Send a request to issue a credential</strong> &mdash; no login, no details yet, just a fresh connection invitation.</li>
+    <li>They scan the QR with their wallet to connect, then enter their name, student ID, department and email.</li>
+    <li>The portal checks those details against the university's enrollment registry &mdash; students and faculty alike. No human reviews it; a records match is the gate. A match sends a <strong>Student ID</strong> or <strong>Faculty ID</strong> credential offer immediately, whichever the record says they are.</li>
+    <li>The holder accepts it in their wallet, then opens <strong>Login</strong>, scans the proof-request QR, and presents the credential.</li>
     <li>ACA-Py verifies the presentation against the credential definition above; the portal then creates a session.</li>
     <li>They browse <strong>Dashboard</strong> and <strong>Profile</strong> with no re-authentication, then log out. What those pages show depends on the role inside the credential.</li>
   </ol>
-  <a class="btn" href="{% url 'issue' %}">Issue a credential</a>
+  <p class="muted">
+    Same process for everyone &mdash; there's no separate faculty-only way to
+    issue a credential. Whoever the registry says you are is what you get.
+  </p>
+  <a class="btn" href="{% url 'request_credential' %}">Send a request to issue a credential</a>
   <a class="btn secondary" href="{% url 'login' %}">Log in with a credential</a>
 </div>
 {% endblock %}
