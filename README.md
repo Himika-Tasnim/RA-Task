@@ -88,22 +88,25 @@ It's idempotent — safe to re-run.
 
 ### 7. Install the wallet app on your phone
 
-This project targets the [Bifold](https://github.com/openwallet-foundation/bifold-wallet)
-mobile wallet (Android package `com.ariesbifold`). Bifold doesn't publish
-a signed APK for download, so build it from that repo (`cd samples\app\android
-&& .\gradlew.bat assembleRelease`), or use an existing `app-release.apk` if
-you already built one.
+With `run.py` running, the portal serves the prebuilt wallet APK
+(a build of [Bifold](https://github.com/openwallet-foundation/bifold-wallet),
+Android package `com.ariesbifold`) directly — no need to build it yourself.
 
-Install it on your phone with adb (phone connected over USB, or over
-Wi-Fi with wireless debugging enabled in Developer options):
+On your phone's browser, on the same Wi-Fi as this PC, open:
 
-```powershell
-adb install -r path\to\app-release.apk
+```
+http://<this-PC's-LAN-IP>:8000/static/bifold-wallet.apk
 ```
 
-Without adb, copy the APK to the phone (e.g. via a cloud drive or cable)
-and open it from a file manager — Android will prompt to allow installs
-from that app the first time.
+`run.py` prints this PC's LAN IP as "Portal (phone)" when it starts up.
+Download the file and open it to install — Android will prompt to allow
+installs from that browser/app the first time.
+
+Alternatively, install it over USB with adb:
+
+```powershell
+adb install -r portal\ssi\static\bifold-wallet.apk
+```
 
 ### 8. Create the mediator invitation
 
