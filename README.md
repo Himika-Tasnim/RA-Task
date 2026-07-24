@@ -50,6 +50,12 @@ real deployment.
 This writes the public DID derived from `AGENT_SEED` to the BCovrin test
 ledger. Re-running with the same seed is safe.
 
+To confirm it landed, take the `did` value this command prints and look it
+up on the [BCovrin ledger explorer](https://indyscan.bcovrin.vonx.io/txs/BCOVRIN_TEST/domain?page=1&pageSize=50&filterTxNames=[]&sortFromRecent=true)
+(paste the DID into its search box). You should see a `NYM` transaction for
+it; after step 6 you'll also see `SCHEMA` and `CLAIM_DEF` transactions, and
+`ATTRIB` transactions each time the agent registers its endpoint.
+
 ### 4. Prepare the Django database (one-time)
 
 ```powershell
