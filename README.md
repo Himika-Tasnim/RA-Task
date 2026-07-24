@@ -15,6 +15,7 @@ Runs natively on Windows: no Docker, no WSL.
 | **[LEARN_SSI.md](LEARN_SSI.md)** | New to SSI? Start here. What DIDs, credentials and ledgers are, where every piece of data is stored, and how this project runs — assumes zero background |
 | **[SETUP_GUIDE.md](SETUP_GUIDE.md)** | Build it from nothing, step by step, with every trap called out |
 | **[HOW_IT_WORKS.md](HOW_IT_WORKS.md)** | The system from the engineering side: security design, and how to use and demo it |
+| **[MESSAGING_PROTOCOL.md](MESSAGING_PROTOCOL.md)** | The messaging bonus feature in depth: which DIDComm/Aries RFCs it uses, the full connect handshake, and where consent actually lives |
 
 ---
 

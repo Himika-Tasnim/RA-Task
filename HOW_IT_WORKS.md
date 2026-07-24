@@ -70,9 +70,12 @@ through ACA-Py's admin API via [portal/ssi/acapy.py](portal/ssi/acapy.py).
 ### Messaging (the bonus)
 
 `/messages/` is a directory of people, not a QR generator. Faculty see students,
-students see faculty. Picking someone produces a QR **for that person**; once
-they scan it there is a direct DIDComm connection carrying Basic Messages both
-ways — unrelated to credential issuance.
+students see faculty. Pressing **Connect** on someone sends *them* an
+invitation; *they* scan it with their own wallet, and their wallet's own
+connect prompt is what actually accepts it. Once connected, Basic Messages
+flow both ways over that connection — unrelated to credential issuance.
+Full protocol detail, state machine and why it works this way:
+[MESSAGING_PROTOCOL.md](MESSAGING_PROTOCOL.md).
 
 ## What is on the ledger
 
@@ -250,8 +253,11 @@ session doing its job. **Logout** ends it.
 
 ## Messaging
 
-`/messages/` → pick a person → **Show QR** → they scan → type and send. Both
-sides poll, so replies appear without refreshing.
+`/messages/` → pick a person → **Connect** → *they* open their own Messages
+page, scan the QR with their wallet, and their wallet's own prompt confirms
+the connection → type and send. Both sides poll, so replies and connection
+changes appear without refreshing. Either side can disconnect afterwards.
+Details: [MESSAGING_PROTOCOL.md](MESSAGING_PROTOCOL.md).
 
 ## The two QR codes
 
