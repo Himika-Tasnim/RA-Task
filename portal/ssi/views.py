@@ -24,6 +24,7 @@ from functools import wraps
 import qrcode
 from django.conf import settings
 from django.contrib import messages as flash
+from django.db import models
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -526,20 +527,37 @@ def oob_invitation(request, token):
     JSON, which is the behaviour the out-of-band spec defines for shortened
     URLs. Anything that isn't asking for JSON (a curious browser) gets bounced
     to the full `oob=` URL instead so the invitation still resolves.
+
+    A chat has two invitations (see `ChatInvitation`), each with its own
+    token, so both `token` and `counterparty_token` are checked.
     """
+    invitation_json, invitation_url = None, ""
+
     record = (
         LoginSession.objects.filter(token=token).first()
         or IssuanceRequest.objects.filter(token=token).first()
     )
-    if not record or not record.invitation_json:
+    if record:
+        invitation_json, invitation_url = record.invitation_json, record.invitation_url
+    else:
+        chat = ChatInvitation.objects.filter(token=token).first()
+        if chat:
+            invitation_json, invitation_url = chat.invitation_json, chat.invitation_url
+        else:
+            chat = ChatInvitation.objects.filter(counterparty_token=token).first()
+            if chat:
+                invitation_json = chat.counterparty_invitation_json
+                invitation_url = chat.counterparty_invitation_url
+
+    if not invitation_json:
         raise Http404("Unknown or expired invitation.")
 
     accept = request.headers.get("Accept", "")
     if "application/json" in accept or "*/*" in accept or not accept:
-        response = JsonResponse(record.invitation_json)
+        response = JsonResponse(invitation_json)
         response["Content-Type"] = "application/json"
         return response
-    return redirect(record.invitation_url)
+    return redirect(invitation_url)
 
 
 def logout_view(request):
@@ -616,28 +634,33 @@ def profile(request):
 # ---------------------------------------------------------------------------
 # bonus: 1-to-1 DIDComm messaging
 #
-# Messaging between a student and a faculty member runs over its own
-# dedicated DID Exchange (RFC 0023) connection -- not the one either of them
-# used to receive their own credential:
+# Messaging between a student and a faculty member runs over TWO dedicated
+# DID Exchange (RFC 0023) connections -- not the one either of them used to
+# receive their own credential, and not just one connection shared between
+# them. A DIDComm connection is inherently pairwise (one wallet, one agent),
+# and the portal's agent is a single shared endpoint, so reaching two
+# different phones means two independent connections to it, one per phone:
 #
-#   /messages/ (either side presses Connect) --> invitation created, AWAITING_SCAN
-#     --> shown to the OTHER party, who scans it with THEIR OWN wallet
-#     --> their wallet's own "connect to Demo University?" prompt is the
-#         real consent step -- declining there means we never see a request
-#     --> REQUESTED (their wallet sent a DID Exchange request)
-#     --> auto-accepted immediately (nothing left for us to decide -- the
-#         wallet already decided) --> CONNECTED, messaging enabled
+#   /messages/ (press Connect) --> invitation #1 created, AWAITING_SCAN
+#     --> shown to the person who pressed Connect -- they scan it with
+#         THEIR OWN wallet, same shape as issuance/login
+#     --> REQUESTED (their connection is active; the OTHER party decides)
+#           reject -> REJECTED (terminal; either side can Connect again)
+#           accept -> invitation #2 created, COUNTERPARTY_SCAN
+#             --> shown to the accepter -- they scan it with THEIR OWN wallet
+#             --> CONNECTED once #2 is also active: two real connections,
+#                 messaging enabled in both directions
 #
-# The other party can also decline outright, before ever scanning
-# (`messages_reject`) -- REJECTED, terminal. Either side can withdraw a
-# request that's sitting unanswered and send a fresh one (`messages_resend`),
-# or end a working connection (`messages_disconnect`). All are terminal
-# except CONNECTED and clear the way for a fresh Connect.
+# Consent lives entirely on the portal, not in either wallet: Bifold (the
+# wallet this project targets) auto-accepts every connection with no
+# accept/decline screen of its own, so both invitations use
+# `auto_accept=true` (see AcaPyClient.create_chat_invitation) and the real
+# gate is simply that invitation #2 is never created unless the counterparty
+# presses Accept.
 #
-# Whoever's wallet actually scans is the one the resulting connection_id
-# reaches -- which is exactly why the OTHER party (not the initiator) has to
-# be the one scanning: on two genuinely separate phones, only their own
-# wallet scanning gets a connection that can actually reach their device.
+# Either side can withdraw a request that's sitting unanswered and send a
+# fresh one (`messages_resend`), or end a working connection
+# (`messages_disconnect`).
 # ---------------------------------------------------------------------------
 @ssi_login_required
 def messages_page(request):
@@ -654,19 +677,26 @@ def messages_page(request):
     ).order_by("full_name"):
         chat = _latest_chat_for_pair(me, person)
         connected = bool(chat and chat.state == ChatInvitation.STATE_CONNECTED)
-        awaiting_scan = bool(chat and chat.state == ChatInvitation.STATE_AWAITING_SCAN)
+        requested = bool(chat and chat.state == ChatInvitation.STATE_REQUESTED)
+        counterparty_scan = bool(chat and chat.state == ChatInvitation.STATE_COUNTERPARTY_SCAN)
         directory.append(
             {
                 "person": person,
-                "unread": BasicMessage.objects.filter(
-                    connection_id=chat.connection_id, outgoing=False
-                ).count() if connected else 0,
+                "unread": chat.messages.exclude(sender_role=my_role).count() if connected else 0,
                 "connected": connected,
-                # Their invitation is waiting on ME to scan it.
-                "needs_my_scan": awaiting_scan and chat.initiated_by_role != my_role,
-                # I clicked Connect and I'm waiting on them to scan.
-                "waiting_on_them": awaiting_scan and chat.initiated_by_role == my_role,
-                "connecting": bool(chat and chat.state == ChatInvitation.STATE_REQUESTED),
+                # Someone scanned and it's on ME to accept/reject.
+                "awaiting_my_decision": requested and chat.initiated_by_role != my_role,
+                # I clicked Connect and I'm waiting on them to decide.
+                "pending_their_decision": requested and chat.initiated_by_role == my_role,
+                "awaiting_scan": bool(
+                    chat
+                    and chat.state == ChatInvitation.STATE_AWAITING_SCAN
+                    and chat.initiated_by_role == my_role
+                ),
+                # I accepted and now need to scan MY OWN invitation.
+                "counterparty_scan_needed": counterparty_scan and chat.initiated_by_role != my_role,
+                # They accepted and are scanning theirs -- nothing for me to do yet.
+                "counterparty_scan_waiting": counterparty_scan and chat.initiated_by_role == my_role,
             }
         )
 
@@ -727,33 +757,75 @@ def _send_chat_invitation(me: dict, person: IssuanceRequest) -> ChatInvitation:
     )
 
 
+def _send_counterparty_invitation(chat: ChatInvitation, person: IssuanceRequest) -> None:
+    """
+    Create the counterparty's own invitation for THEM to scan.
+
+    `person` here is the initiator, from the accepter's point of view (that
+    is what `_counterparty_or_404` returns for whoever is calling this).
+    Moves the chat to COUNTERPARTY_SCAN -- `_on_connection` promotes it the
+    rest of the way to CONNECTED once this second connection goes active.
+    """
+    invitation = AcaPyClient().create_chat_invitation(alias=f"Chat with {person.full_name}")
+    chat.counterparty_invitation_msg_id = invitation.get("invi_msg_id", "")
+    chat.counterparty_invitation_url = invitation.get("invitation_url", "")
+    chat.counterparty_invitation_json = invitation.get("invitation", {})
+    chat.counterparty_connection_id = ""
+    chat.state = ChatInvitation.STATE_COUNTERPARTY_SCAN
+    chat.save(
+        update_fields=[
+            "counterparty_invitation_msg_id",
+            "counterparty_invitation_url",
+            "counterparty_invitation_json",
+            "counterparty_connection_id",
+            "state",
+        ]
+    )
+
+
 @ssi_login_required
 @require_POST
 def messages_resend(request, pk):
     """
-    Withdraw a request that's sitting unanswered and send a fresh one.
+    Get a new QR when one's sitting unscanned -- for a wallet that never
+    scanned, lost connectivity, scanned the wrong thing, or a request just
+    sitting too long.
 
-    Available to EITHER party while the latest attempt is still
-    awaiting_scan (nobody's scanned it) or requested (scanned, but the
-    agent hasn't finished auto-completing it yet) -- for a wallet that
-    never scanned, lost connectivity, scanned the wrong thing, or a request
-    just sitting too long. Not restricted to the original sender: whoever
-    is stuck looking at a dead end should be able to get things moving
-    again without needing the other person to do anything first.
+    From COUNTERPARTY_SCAN, the accepter can ask for a fresh invitation of
+    their own without disturbing the initiator's already-active connection.
+    From AWAITING_SCAN or REQUESTED, EITHER party can restart the whole
+    exchange from scratch -- not restricted to the original sender, since
+    whoever is stuck looking at a dead end should be able to get things
+    moving again without needing the other person to do anything first.
     """
     me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
     person = _counterparty_or_404(request, pk)
     chat = _latest_chat_for_pair(me, person)
 
-    if not chat or chat.state not in (ChatInvitation.STATE_AWAITING_SCAN, ChatInvitation.STATE_REQUESTED):
+    if not chat or chat.state not in (
+        ChatInvitation.STATE_AWAITING_SCAN,
+        ChatInvitation.STATE_REQUESTED,
+        ChatInvitation.STATE_COUNTERPARTY_SCAN,
+    ):
         flash.error(request, "There is no outgoing request to resend.")
         return redirect("messages_thread", pk=pk)
 
-    if chat.connection_id:
+    if chat.state == ChatInvitation.STATE_COUNTERPARTY_SCAN and chat.initiated_by_role != my_role:
         try:
-            AcaPyClient().delete_connection(chat.connection_id)
-        except AcaPyError:
-            pass  # best effort -- a stale agent-side connection doesn't block a fresh one
+            _send_counterparty_invitation(chat, person)
+        except AcaPyError as exc:
+            flash.error(request, f"Could not create a new connection invitation: {exc}")
+            return redirect("messages_thread", pk=pk)
+        flash.success(request, "Sent you a new QR to scan.")
+        return redirect("messages_thread", pk=pk)
+
+    for cid in (chat.connection_id, chat.counterparty_connection_id):
+        if cid:
+            try:
+                AcaPyClient().delete_connection(cid)
+            except AcaPyError:
+                pass  # best effort -- a stale agent-side connection doesn't block a fresh one
     chat.state = ChatInvitation.STATE_CANCELLED
     chat.save(update_fields=["state"])
 
@@ -778,21 +850,34 @@ def messages_thread(request, pk):
     context = {"member": me, "person": person, "chat_state": "none"}
 
     if chat and chat.state == ChatInvitation.STATE_CONNECTED:
-        context.update(
-            chat_state="connected",
-            thread=BasicMessage.objects.filter(connection_id=chat.connection_id),
-        )
+        thread = list(chat.messages.all())
+        for m in thread:
+            m.outgoing = m.sender_role == my_role
+        context.update(chat_state="connected", thread=thread)
     elif chat and chat.state == ChatInvitation.STATE_REQUESTED:
-        context["chat_state"] = "connecting"
-    elif chat and chat.state == ChatInvitation.STATE_AWAITING_SCAN:
         if chat.initiated_by_role == my_role:
-            context["chat_state"] = "waiting_on_them"
+            context["chat_state"] = "pending_their_decision"
+        else:
+            context["chat_state"] = "awaiting_my_decision"
+    elif chat and chat.state == ChatInvitation.STATE_COUNTERPARTY_SCAN:
+        if chat.initiated_by_role == my_role:
+            context["chat_state"] = "counterparty_scan_waiting"
         else:
             context.update(
-                chat_state="needs_my_scan",
-                short_url=short_invitation_url(chat.token),
-                qr=qr_data_uri(chat.invitation_url),
+                chat_state="counterparty_scan_needed",
+                short_url=short_invitation_url(chat.counterparty_token),
+                qr=qr_data_uri(chat.counterparty_invitation_url),
             )
+    elif (
+        chat
+        and chat.state == ChatInvitation.STATE_AWAITING_SCAN
+        and chat.initiated_by_role == my_role
+    ):
+        context.update(
+            chat_state="awaiting_scan",
+            short_url=short_invitation_url(chat.token),
+            qr=qr_data_uri(chat.invitation_url),
+        )
     elif chat and chat.state == ChatInvitation.STATE_REJECTED:
         context["chat_state"] = "rejected"
     elif chat and chat.state == ChatInvitation.STATE_DISCONNECTED:
@@ -810,11 +895,7 @@ def messages_status(request, pk):
     person = _counterparty_or_404(request, pk)
     chat = _latest_chat_for_pair(me, person)
     connected = bool(chat and chat.state == ChatInvitation.STATE_CONNECTED)
-    message_count = (
-        BasicMessage.objects.filter(connection_id=chat.connection_id).count()
-        if connected
-        else 0
-    )
+    message_count = chat.messages.count() if connected else 0
     return JsonResponse(
         {
             "state": chat.state if chat else "none",
@@ -825,13 +906,37 @@ def messages_status(request, pk):
 
 @ssi_login_required
 @require_POST
+def messages_accept(request, pk):
+    """
+    The receiving party accepts a pending connection request by generating
+    their OWN invitation to scan -- see the module docstring above for why
+    this needs a second, independent connection rather than a bare flag.
+    """
+    me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    person = _counterparty_or_404(request, pk)
+    chat = _latest_chat_for_pair(me, person)
+
+    if not chat or chat.state != ChatInvitation.STATE_REQUESTED or chat.initiated_by_role == my_role:
+        flash.error(request, "There is no pending connection request to accept.")
+        return redirect("messages_thread", pk=pk)
+
+    try:
+        _send_counterparty_invitation(chat, person)
+    except AcaPyError as exc:
+        flash.error(request, f"Could not create your connection invitation: {exc}")
+        return redirect("messages_thread", pk=pk)
+
+    flash.success(request, "Scan the QR with your own wallet to finish connecting.")
+    return redirect("messages_thread", pk=pk)
+
+
+@ssi_login_required
+@require_POST
 def messages_reject(request, pk):
     """
-    Decline a connection request without scanning it.
-
-    Available to the party the invitation is waiting on (not the person who
-    sent it) while it's still awaiting_scan, or briefly requested if their
-    wallet already scanned but the agent hasn't auto-completed it yet.
+    The receiving party declines a pending connection request, or backs out
+    before finishing their own scan.
     """
     me = request.session[SESSION_KEY]
     my_role = me.get("role", settings.ROLE_STUDENT)
@@ -840,17 +945,18 @@ def messages_reject(request, pk):
 
     if (
         not chat
-        or chat.state not in (ChatInvitation.STATE_AWAITING_SCAN, ChatInvitation.STATE_REQUESTED)
+        or chat.state not in (ChatInvitation.STATE_REQUESTED, ChatInvitation.STATE_COUNTERPARTY_SCAN)
         or chat.initiated_by_role == my_role
     ):
         flash.error(request, "There is no pending connection request to reject.")
         return redirect("messages_thread", pk=pk)
 
-    if chat.connection_id:
-        try:
-            AcaPyClient().reject_connection(chat.connection_id, reason="Declined by the recipient.")
-        except AcaPyError:
-            pass  # best effort -- still mark it rejected locally so a retry isn't blocked
+    for cid in (chat.connection_id, chat.counterparty_connection_id):
+        if cid:
+            try:
+                AcaPyClient().delete_connection(cid)
+            except AcaPyError:
+                pass  # best effort -- still mark it rejected locally so a retry isn't blocked
 
     chat.state = ChatInvitation.STATE_REJECTED
     chat.save(update_fields=["state"])
@@ -866,9 +972,11 @@ def messages_disconnect(request, pk):
 
     There's no "goodbye" message in DID Exchange itself -- ending a
     connection is a local decision each side makes about its own agent, so
-    this only removes our side. The other party's wallet keeps its own copy
-    until they separately act on it, but any further message we send down
-    the now-deleted connection_id will simply fail.
+    this only removes both of OUR sides: the initiator's connection AND the
+    counterparty's (see `ChatInvitation` -- a chat is two connections, one
+    per phone). Each wallet keeps its own copy until it separately acts on
+    it, but any further message relayed down the now-deleted connection ids
+    will simply fail.
     """
     me = request.session[SESSION_KEY]
     person = _counterparty_or_404(request, pk)
@@ -878,11 +986,12 @@ def messages_disconnect(request, pk):
         flash.error(request, "There is no active connection to end.")
         return redirect("messages_thread", pk=pk)
 
-    if chat.connection_id:
-        try:
-            AcaPyClient().delete_connection(chat.connection_id)
-        except AcaPyError:
-            pass  # best effort -- still mark it disconnected locally
+    for cid in (chat.connection_id, chat.counterparty_connection_id):
+        if cid:
+            try:
+                AcaPyClient().delete_connection(cid)
+            except AcaPyError:
+                pass  # best effort -- still mark it disconnected locally
 
     chat.state = ChatInvitation.STATE_DISCONNECTED
     chat.save(update_fields=["state"])
@@ -893,23 +1002,33 @@ def messages_disconnect(request, pk):
 @ssi_login_required
 @require_POST
 def messages_send(request, pk):
+    """
+    Send a message typed on the website.
+
+    Delivered straight to the RECIPIENT's own connection, not the sender's
+    -- each phone only ever receives what's sent down ITS OWN connection
+    (see `ChatInvitation`). A message typed directly on a wallet instead of
+    the website arrives here via `_on_basic_message`, which relays it the
+    same way in the other direction.
+    """
     me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
     person = _counterparty_or_404(request, pk)
     content = request.POST.get("content", "").strip()
     chat = _latest_chat_for_pair(me, person)
 
-    if not chat or chat.state != ChatInvitation.STATE_CONNECTED or not chat.connection_id:
+    if not chat or chat.state != ChatInvitation.STATE_CONNECTED:
         flash.error(request, "That person is not connected for messaging yet.")
         return redirect("messages_thread", pk=pk)
 
-    if content:
+    their_connection_id = (
+        chat.counterparty_connection_id if my_role == chat.initiated_by_role else chat.connection_id
+    )
+
+    if content and their_connection_id:
         try:
-            AcaPyClient().send_basic_message(chat.connection_id, content)
-            BasicMessage.objects.create(
-                connection_id=chat.connection_id,
-                content=content,
-                outgoing=True,
-            )
+            AcaPyClient().send_basic_message(their_connection_id, content)
+            BasicMessage.objects.create(chat=chat, sender_role=my_role, content=content)
         except AcaPyError as exc:
             flash.error(request, f"Could not send: {exc}")
     return redirect("messages_thread", pk=pk)
@@ -966,6 +1085,13 @@ def webhook(request, topic):
     return JsonResponse({"ok": True})
 
 
+_CHAT_NONTERMINAL = (
+    ChatInvitation.STATE_AWAITING_SCAN,
+    ChatInvitation.STATE_REQUESTED,
+    ChatInvitation.STATE_COUNTERPARTY_SCAN,
+)
+
+
 def _on_connection(payload: dict) -> None:
     """
     A DID-exchange connection changed state.
@@ -975,12 +1101,12 @@ def _on_connection(payload: dict) -> None:
     mark CONNECTED and stop; `request_submit_details` does the registry
     check and issues once the applicant submits their details.
 
-    Chat connections auto_accept=false instead (see AcaPyClient.
-    create_chat_invitation), so they pass through an extra "request" state
-    that issuance never lingers on -- that is the scan having landed, now
-    awaiting the invitation owner's accept/reject in `messages_accept` /
-    `messages_reject`. Only once THAT happens does ACA-Py move it on to
-    active/completed.
+    A chat is two independent connections, one per phone (see
+    `ChatInvitation`), both auto-accepting the instant their owner scans.
+    This fires once per connection, so it may match either the initiator's
+    `invitation_msg_id` or the counterparty's `counterparty_invitation_msg_id`
+    -- whichever matches, that side's connection_id is recorded, and the
+    chat only reaches CONNECTED once BOTH sides are active.
     """
     state = payload.get("state")
     invitation_msg_id = payload.get("invitation_msg_id")
@@ -1000,47 +1126,34 @@ def _on_connection(payload: dict) -> None:
             req.save(update_fields=["connection_id", "state", "detail"])
             return
 
-        chat = (
-            ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id)
-            .exclude(
-                state__in=(
-                    ChatInvitation.STATE_REJECTED,
-                    ChatInvitation.STATE_CANCELLED,
-                    ChatInvitation.STATE_DISCONNECTED,
-                )
-            )
-            .first()
-        )
-        if chat:
-            chat.connection_id = connection_id
-            chat.state = ChatInvitation.STATE_CONNECTED
-            chat.save(update_fields=["connection_id", "state"])
-        return
-
-    if state == "request":
         chat = ChatInvitation.objects.filter(
-            invitation_msg_id=invitation_msg_id,
-            state=ChatInvitation.STATE_AWAITING_SCAN,
+            invitation_msg_id=invitation_msg_id, state__in=_CHAT_NONTERMINAL
         ).first()
         if chat:
             chat.connection_id = connection_id
-            chat.state = ChatInvitation.STATE_REQUESTED
+            if chat.counterparty_connection_id:
+                chat.state = ChatInvitation.STATE_CONNECTED
+            elif chat.state == ChatInvitation.STATE_AWAITING_SCAN:
+                chat.state = ChatInvitation.STATE_REQUESTED
             chat.save(update_fields=["connection_id", "state"])
+            return
+
+        chat = ChatInvitation.objects.filter(
+            counterparty_invitation_msg_id=invitation_msg_id, state__in=_CHAT_NONTERMINAL
+        ).first()
+        if chat:
+            chat.counterparty_connection_id = connection_id
+            if chat.connection_id:
+                chat.state = ChatInvitation.STATE_CONNECTED
+            chat.save(update_fields=["counterparty_connection_id", "state"])
         return
 
     if state in ("error", "abandoned"):
-        chat = (
-            ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id)
-            .exclude(
-                state__in=(
-                    ChatInvitation.STATE_CONNECTED,
-                    ChatInvitation.STATE_REJECTED,
-                    ChatInvitation.STATE_CANCELLED,
-                    ChatInvitation.STATE_DISCONNECTED,
-                )
-            )
-            .first()
-        )
+        chat = ChatInvitation.objects.filter(
+            models.Q(invitation_msg_id=invitation_msg_id)
+            | models.Q(counterparty_invitation_msg_id=invitation_msg_id),
+            state__in=_CHAT_NONTERMINAL,
+        ).first()
         if chat:
             chat.state = ChatInvitation.STATE_ERROR
             chat.save(update_fields=["state"])
@@ -1095,9 +1208,34 @@ def _on_presentation(payload: dict) -> None:
 
 
 def _on_basic_message(payload: dict) -> None:
+    """
+    A message arrived on one of a chat's two connections -- could be either
+    side's phone, sent from their wallet's own chat feature rather than the
+    website. Record it, then relay it onto the OTHER connection so the
+    other person's phone receives it too; the website textbox
+    (`messages_send`) already delivers straight to the recipient, so this
+    is only needed for wallet-to-wallet traffic.
+    """
     connection_id = payload.get("connection_id")
     content = payload.get("content")
-    if connection_id and content:
-        BasicMessage.objects.create(
-            connection_id=connection_id, content=content, outgoing=False
-        )
+    if not connection_id or not content:
+        return
+
+    chat = ChatInvitation.objects.filter(
+        models.Q(connection_id=connection_id) | models.Q(counterparty_connection_id=connection_id),
+        state=ChatInvitation.STATE_CONNECTED,
+    ).first()
+    if not chat:
+        return
+
+    sender_role = chat.role_for_connection(connection_id)
+    BasicMessage.objects.create(chat=chat, sender_role=sender_role, content=content)
+
+    relay_to = (
+        chat.counterparty_connection_id if connection_id == chat.connection_id else chat.connection_id
+    )
+    if relay_to:
+        try:
+            AcaPyClient().send_basic_message(relay_to, content)
+        except AcaPyError:
+            log.warning("could not relay message on chat %s to %s", chat.pk, relay_to)

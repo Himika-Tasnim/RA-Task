@@ -172,37 +172,45 @@ class IssuanceRequest(models.Model):
 class ChatInvitation(models.Model):
     """
     One connection attempt between one student and one faculty member, for
-    the messaging bonus feature -- a real DID Exchange (RFC 0023) handshake,
-    not just a database flag.
+    the messaging bonus feature -- TWO real DID Exchange (RFC 0023)
+    handshakes, not just a database flag.
 
-    Either side can press Connect first -- `initiated_by_role` records who
-    did. The invitation is then shown to the OTHER party, who scans it with
-    their OWN wallet. That scan is where consent actually lives: the wallet
-    itself (not this app) is what prompts "connect to Demo University?"
-    before it ever sends a request, and declining there means our agent
-    never receives one. This app's own Reject button (see `messages_reject`)
-    covers the same decision made from the portal instead of the wallet.
+    A DIDComm connection is inherently pairwise -- one wallet, one agent.
+    The portal's agent is a single shared endpoint, so reaching two
+    different phones means forming two independent connections to it, one
+    per phone, not one connection that somehow serves both people:
 
-    This also matters for a reason beyond consent: whoever's wallet actually
-    scans is the one whose device the resulting connection_id reaches. If
-    the initiator scanned their own invitation instead (the previous design
-    here), the connection would run to the initiator's OWN wallet -- useless
-    for reaching the other party once they're on a genuinely separate phone.
+      `initiated_by_role` presses Connect and scans the resulting QR
+      (`invitation_*` / `connection_id`) with their own wallet -- same
+      shape as issuance and login. The OTHER party then presses Accept,
+      which creates a SECOND invitation (`counterparty_invitation_*` /
+      `counterparty_connection_id`) for THEM to scan with THEIR OWN wallet.
+      Only once both connections are active is there an actual path to
+      either person's phone, and only then does the chat reach CONNECTED.
+
+    Consent lives entirely on the portal, not in either wallet: Bifold (the
+    wallet this project targets) auto-accepts every connection with no
+    accept/decline screen of its own, so the invitation itself is created
+    with `auto_accept=true` on both sides (see `AcaPyClient.
+    create_chat_invitation`) -- the real gate is that the counterparty's
+    invitation is never created at all unless they explicitly press Accept
+    rather than Reject.
 
     `student_id_number` + `faculty_id_number` identify the pair regardless
     of who initiated, so both people's directory queries find the same row
     (messaging is strictly one student <-> one faculty member, enforced by
     `_counterparty_or_404`).
 
-    States, in order: AWAITING_SCAN (invitation created, nobody's scanned
-    it) -> REQUESTED (their wallet scanned it and sent a DID Exchange
-    request -- RFC 0023 calls this "request-received"; auto_accept=true
-    means our agent answers automatically, so this is normally momentary)
-    -> CONNECTED (response sent and acknowledged -- a real, usable DIDComm
-    connection). REJECTED/CANCELLED/DISCONNECTED/ERROR are all terminal and
-    all equally clear the way for a fresh Connect, but mean different
-    things: REJECTED is the other party explicitly declining (via this app,
-    without ever scanning); CANCELLED is the sender giving up on one sitting
+    States, in order: AWAITING_SCAN (invitation created, the initiator
+    hasn't scanned it yet) -> REQUESTED (the initiator's connection is
+    active; sits here until the other party decides) -> COUNTERPARTY_SCAN
+    (the other party pressed Accept and now has their own invitation to
+    scan) -> CONNECTED (both connections are active -- two real, usable
+    DIDComm connections, one per phone). REJECTED/CANCELLED/DISCONNECTED/
+    ERROR are all terminal and all equally clear the way for a fresh
+    Connect, but mean different things: REJECTED is the other party
+    explicitly declining a pending request or backing out before finishing
+    their own scan; CANCELLED is the sender giving up on one sitting
     unanswered and sending a new one instead (`messages_resend`);
     DISCONNECTED is either party deliberately ending a working connection
     (`messages_disconnect`); ERROR is the protocol itself failing.
@@ -210,6 +218,7 @@ class ChatInvitation(models.Model):
 
     STATE_AWAITING_SCAN = "awaiting_scan"
     STATE_REQUESTED = "requested"
+    STATE_COUNTERPARTY_SCAN = "counterparty_scan"
     STATE_CONNECTED = "connected"
     STATE_REJECTED = "rejected"
     STATE_CANCELLED = "cancelled"
@@ -217,11 +226,21 @@ class ChatInvitation(models.Model):
     STATE_ERROR = "error"
 
     label = models.CharField(max_length=120, default="Faculty")
+
+    # The initiator's own invitation/connection -- they scan this one.
     invitation_msg_id = models.CharField(max_length=120, db_index=True)
     invitation_url = models.TextField(blank=True)
     invitation_json = models.JSONField(default=dict, blank=True)
     token = models.CharField(max_length=32, default=short_token, db_index=True)
     connection_id = models.CharField(max_length=120, blank=True, db_index=True)
+
+    # The counterparty's own invitation/connection -- created only once they
+    # press Accept, and only they scan this one.
+    counterparty_invitation_msg_id = models.CharField(max_length=120, blank=True, db_index=True)
+    counterparty_invitation_url = models.TextField(blank=True)
+    counterparty_invitation_json = models.JSONField(default=dict, blank=True)
+    counterparty_token = models.CharField(max_length=32, default=short_token, db_index=True)
+    counterparty_connection_id = models.CharField(max_length=120, blank=True, db_index=True)
 
     student_id_number = models.CharField(max_length=60, default="", db_index=True)
     faculty_id_number = models.CharField(max_length=60, default="", db_index=True)
@@ -235,6 +254,26 @@ class ChatInvitation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.student_id_number} <-> {self.faculty_id_number} - {self.state}"
+
+    def connection_id_for(self, role: str) -> str:
+        """Which connection_id belongs to `role` -- theirs or the counterparty's."""
+        return self.connection_id if role == self.initiated_by_role else self.counterparty_connection_id
+
+    def other_role(self) -> str:
+        """The counterparty's role -- whichever role did NOT press Connect."""
+        from django.conf import settings as dj_settings
+
+        return (
+            dj_settings.ROLE_FACULTY
+            if self.initiated_by_role == dj_settings.ROLE_STUDENT
+            else dj_settings.ROLE_STUDENT
+        )
+
+    def role_for_connection(self, connection_id: str) -> str:
+        """Whose connection `connection_id` is -- the initiator's or the counterparty's."""
+        if connection_id and connection_id == self.counterparty_connection_id:
+            return self.other_role()
+        return self.initiated_by_role
 
 
 class LoginSession(models.Model):
@@ -274,27 +313,30 @@ class LoginSession(models.Model):
 class BasicMessage(models.Model):
     """
     Bonus feature: 1-to-1 DIDComm messages between one student and one
-    faculty member, over the dedicated connection their `ChatInvitation`
-    formed -- not the one either of them used to receive their own
-    credential. Reusing the issuance connection would let any two issued
-    members message each other the instant both hold a credential, with no
-    consent step; a separate `ChatInvitation` per pair is what makes an
-    explicit accept/reject the gate for messaging, not just for issuance.
+    faculty member, over the pair of dedicated connections their
+    `ChatInvitation` formed -- not the one either of them used to receive
+    their own credential. Reusing the issuance connection would let any two
+    issued members message each other the instant both hold a credential,
+    with no consent step; a separate `ChatInvitation` per pair is what
+    makes an explicit accept/reject the gate for messaging, not just for
+    issuance.
 
-    Both directions land here -- outgoing ones when we call ACA-Py, incoming
-    ones from the `basicmessages` webhook -- keyed by `connection_id`, which
-    is `ChatInvitation.connection_id` for that pair once it reaches
-    `STATE_CONNECTED`.
+    Keyed by `chat` + `sender_role` rather than a single `connection_id` +
+    `outgoing` flag: a chat now has TWO connection ids (one per phone, see
+    `ChatInvitation`), so "outgoing" is only meaningful relative to whoever
+    is looking -- `sender_role` records who actually sent it (`_on_
+    basic_message` sets it from whichever connection the webhook fired on;
+    `messages_send` sets it to the logged-in member's own role), and each
+    view derives "outgoing" for itself by comparing against its own role.
     """
 
-    connection_id = models.CharField(max_length=120, db_index=True)
+    chat = models.ForeignKey("ChatInvitation", on_delete=models.CASCADE, related_name="messages")
+    sender_role = models.CharField(max_length=20)
     content = models.TextField()
-    outgoing = models.BooleanField(default=False)
     sent_time = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["sent_time"]
 
     def __str__(self) -> str:
-        direction = "->" if self.outgoing else "<-"
-        return f"{direction} {self.content[:40]}"
+        return f"{self.sender_role}: {self.content[:40]}"

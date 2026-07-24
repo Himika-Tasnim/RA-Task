@@ -142,13 +142,20 @@ class AcaPyClient:
         Out-of-band invitation (RFC 0434) for the 1-to-1 messaging feature,
         naming DID Exchange 1.0 (RFC 0023) as its handshake protocol.
 
-        `auto_accept=true` here is deliberate: consent for this feature
-        lives in the OTHER party's wallet choosing to scan this and send a
-        DID Exchange request at all (see ChatInvitation's docstring) -- once
-        that request arrives there is nothing left for our side to decide,
-        so completing it automatically just carries out a choice the wallet
-        already made. An explicit portal-side decline before scanning is
-        still available (`messages_reject`).
+        Called twice per chat -- once for whoever presses Connect, once more
+        for whoever presses Accept -- because a DIDComm connection is
+        pairwise: reaching two different phones through this one shared
+        agent means forming two independent connections to it, one per
+        phone, not one connection that somehow serves both people. See
+        `ChatInvitation` for the full shape.
+
+        `auto_accept=true`: the wallet apps this project targets (Bifold)
+        auto-accept every connection with no accept/decline screen of their
+        own anyway, so there's no wallet-side consent step to defer to.
+        Consent lives entirely on the portal instead -- the counterparty's
+        invitation is simply never created unless they press Accept rather
+        than Reject (`messages_accept` / `messages_reject`), so there's
+        nothing left to gate once an invitation exists to be scanned.
         """
         return self.post(
             "/out-of-band/create-invitation",
@@ -161,20 +168,17 @@ class AcaPyClient:
             params={"auto_accept": "true"},
         )
 
-    def reject_connection(self, connection_id: str, reason: str = "") -> Dict:
-        """Abandon a connection that already has a request-received record."""
-        return self.post(f"/didexchange/{connection_id}/reject", {"reason": reason})
-
     def delete_connection(self, connection_id: str) -> Dict:
         """
         Remove a connection outright.
 
-        Used both for `messages_resend` (clear a stale half-open connection
-        before a fresh invitation replaces it) and `messages_disconnect`
-        (either party deliberately ending a working one). There's no
-        protocol message for "goodbye" in DID Exchange itself -- ending a
-        connection is a purely local decision each side makes about its own
-        agent, same as this.
+        Used for `messages_resend` (clear a stale half-open connection
+        before a fresh invitation replaces it), `messages_reject` (discard
+        whichever side's connection already exists when the other party
+        declines), and `messages_disconnect` (either party deliberately
+        ending a working one). There's no protocol message for "goodbye" in
+        DID Exchange itself -- ending a connection is a purely local
+        decision each side makes about its own agent, same as this.
         """
         return self.delete(f"/connections/{connection_id}")
 

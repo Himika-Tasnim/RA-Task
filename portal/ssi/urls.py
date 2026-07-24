@@ -28,6 +28,7 @@ urlpatterns = [
     path("messages/", views.messages_page, name="messages"),
     path("messages/<int:pk>/start/", views.messages_start, name="messages_start"),
     path("messages/<int:pk>/resend/", views.messages_resend, name="messages_resend"),
+    path("messages/<int:pk>/accept/", views.messages_accept, name="messages_accept"),
     path("messages/<int:pk>/reject/", views.messages_reject, name="messages_reject"),
     path("messages/<int:pk>/disconnect/", views.messages_disconnect, name="messages_disconnect"),
     path("messages/<int:pk>/", views.messages_thread, name="messages_thread"),

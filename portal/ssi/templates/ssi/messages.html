@@ -4,10 +4,11 @@
 {% block content %}
 <h1>Secure messages</h1>
 <p class="sub">
-  Pick someone to message. Press Connect and it's THEIR wallet that scans
-  and confirms the connection — the same "connect to Demo University?"
-  prompt your own wallet shows you for any invitation. Nothing is
-  connected, and no messages can flow, until they do that.
+  Pick someone to message. Press Connect and scan the invitation with your
+  own wallet — that's a real DID Exchange request. The other person then
+  accepts or rejects it here on the portal, and if they accept, they scan
+  their own QR too — two separate connections, one per phone, so messages
+  reach both of you directly.
 </p>
 
 <div class="card">
@@ -27,16 +28,24 @@
               <span class="pill ok">connected</span>
               <a class="btn" style="margin:0 0 0 10px; padding:7px 14px"
                  href="{% url 'messages_thread' entry.person.pk %}">Message</a>
-            {% elif entry.needs_my_scan %}
+            {% elif entry.awaiting_my_decision %}
               <span class="pill wait">wants to connect</span>
               <a class="btn" style="margin:0 0 0 10px; padding:7px 14px"
-                 href="{% url 'messages_thread' entry.person.pk %}">Scan to connect</a>
-            {% elif entry.connecting %}
-              <span class="pill wait">connecting…</span>
+                 href="{% url 'messages_thread' entry.person.pk %}">Review request</a>
+            {% elif entry.pending_their_decision %}
+              <span class="pill wait">awaiting their consent</span>
               <a class="btn secondary" style="margin:0 0 0 10px; padding:7px 14px"
                  href="{% url 'messages_thread' entry.person.pk %}">View status</a>
-            {% elif entry.waiting_on_them %}
-              <span class="pill wait">waiting for them to scan</span>
+            {% elif entry.awaiting_scan %}
+              <span class="pill wait">waiting for scan</span>
+              <a class="btn secondary" style="margin:0 0 0 10px; padding:7px 14px"
+                 href="{% url 'messages_thread' entry.person.pk %}">View QR</a>
+            {% elif entry.counterparty_scan_needed %}
+              <span class="pill wait">scan to finish</span>
+              <a class="btn" style="margin:0 0 0 10px; padding:7px 14px"
+                 href="{% url 'messages_thread' entry.person.pk %}">View QR</a>
+            {% elif entry.counterparty_scan_waiting %}
+              <span class="pill wait">they're scanning</span>
               <a class="btn secondary" style="margin:0 0 0 10px; padding:7px 14px"
                  href="{% url 'messages_thread' entry.person.pk %}">View status</a>
             {% else %}
@@ -66,9 +75,10 @@
 <div class="card">
   <h2>How this works</h2>
   <ol class="steps">
-    <li>Press <strong>Connect</strong> — this sends them an invitation, it does not connect anything yet.</li>
-    <li>They open their own Messages page and scan the QR shown there with their wallet. Their wallet asks them to confirm the connection before it sends anything — that's the actual consent step, not a button on this website.</li>
-    <li>Once their wallet confirms, a real DIDComm connection exists and messages can flow both ways. Either side can end it later from the conversation.</li>
+    <li>Press <strong>Connect</strong> and scan the invitation QR with your wallet — that sends a real DID Exchange connection request.</li>
+    <li>The other person sees <strong>Review request</strong> on their own Messages page and chooses to accept or reject it right there.</li>
+    <li>If they accept, they get their own QR and scan it with their own wallet — a second, independent connection, separate from yours.</li>
+    <li>Only once both connections exist can messages flow, straight to whichever phone they're addressed to — either side can decline instead, and nothing is connected.</li>
   </ol>
 </div>
 {% endblock %}

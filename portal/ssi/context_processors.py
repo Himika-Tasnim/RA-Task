@@ -3,8 +3,8 @@ from .models import ChatInvitation
 
 def pending_chat_requests(request):
     """
-    How many connection invitations are waiting on the logged-in member to
-    scan them with their own wallet.
+    How many connection requests are waiting on the logged-in member to
+    accept or reject them on the portal.
 
     Surfaced as a badge on the Messages nav link (see base.html) so a
     pending request is visible on every page the moment someone logs in,
@@ -14,8 +14,9 @@ def pending_chat_requests(request):
     latest is awaiting_scan/requested/connected), so filtering on state
     alone -- without also picking "latest per pair" -- can't double count.
 
-    Only counts awaiting_scan, not requested: requested means their wallet
-    already scanned it, so there's nothing left for them to go and do.
+    Only counts requested, not awaiting_scan: awaiting_scan means the OTHER
+    party (the initiator) hasn't even scanned their own invitation yet, so
+    there's nothing yet for me to decide.
     """
     member = request.session.get("member")
     if not member:
@@ -29,7 +30,7 @@ def pending_chat_requests(request):
         qs = ChatInvitation.objects.filter(student_id_number=id_number)
 
     count = (
-        qs.filter(state=ChatInvitation.STATE_AWAITING_SCAN)
+        qs.filter(state=ChatInvitation.STATE_REQUESTED)
         .exclude(initiated_by_role=my_role)
         .count()
     )

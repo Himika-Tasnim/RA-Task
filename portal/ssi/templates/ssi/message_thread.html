@@ -64,13 +64,12 @@
     if (t) t.scrollTop = t.scrollHeight;
   </script>
 
-{% elif chat_state == "needs_my_scan" %}
+{% elif chat_state == "awaiting_scan" %}
   <div class="card">
-    <h2>{{ person.full_name }} wants to connect <span class="pill wait" style="font-size:12px">scan to accept</span></h2>
+    <h2>Scan to connect <span class="pill wait" style="font-size:12px">awaiting scan</span></h2>
     <p class="muted" style="margin-top:-4px">
-      Scan this with <strong>your own wallet</strong>. Your wallet will ask you to
-      confirm the connection before it sends anything — that confirmation is what
-      actually accepts this request. Nothing is connected until you do that.
+      Scan this with <strong>your own wallet</strong> to send {{ person.full_name }}
+      a connection request. They'll accept or reject it on their own Messages page.
     </p>
     <div class="qr">
       <img src="{{ qr }}" alt="Chat invitation QR code">
@@ -80,11 +79,7 @@
       <summary class="muted">Can't scan? Show the URL</summary>
       <p class="mono" style="margin-top:8px">{{ short_url }}</p>
     </details>
-    <div style="margin-top:16px; display:flex; gap:10px">
-      <form method="post" action="{% url 'messages_reject' person.pk %}">
-        {% csrf_token %}
-        <button class="btn secondary" type="submit">Decline without scanning</button>
-      </form>
+    <div style="margin-top:16px">
       <form method="post" action="{% url 'messages_resend' person.pk %}">
         {% csrf_token %}
         <button class="btn secondary" type="submit">Get a new QR</button>
@@ -95,13 +90,74 @@
     setTimeout(() => window.location.reload(), 4000);
   </script>
 
-{% elif chat_state == "waiting_on_them" %}
+{% elif chat_state == "awaiting_my_decision" %}
+  <div class="card">
+    <h2>{{ person.full_name }} wants to connect <span class="pill wait" style="font-size:12px">action needed</span></h2>
+    <p class="muted" style="margin-top:-4px">
+      Their wallet has connected. Accept to get your own QR to scan and finish
+      connecting, or reject to decline -- nothing further happens until you do.
+    </p>
+    <div style="margin-top:16px; display:flex; gap:10px">
+      <form method="post" action="{% url 'messages_accept' person.pk %}">
+        {% csrf_token %}
+        <button class="btn" type="submit">Accept</button>
+      </form>
+      <form method="post" action="{% url 'messages_reject' person.pk %}">
+        {% csrf_token %}
+        <button class="btn secondary" type="submit">Reject</button>
+      </form>
+    </div>
+  </div>
+
+{% elif chat_state == "counterparty_scan_needed" %}
+  <div class="card">
+    <h2>Scan to finish connecting <span class="pill wait" style="font-size:12px">awaiting scan</span></h2>
+    <p class="muted" style="margin-top:-4px">
+      Scan this with <strong>your own wallet</strong> -- this is YOUR connection
+      to {{ person.full_name }}, separate from theirs, so messages can reach
+      your phone directly.
+    </p>
+    <div class="qr">
+      <img src="{{ qr }}" alt="Chat invitation QR code">
+      <div class="muted" style="margin-top:10px">waiting for your wallet to scan…</div>
+    </div>
+    <details style="margin-top:12px">
+      <summary class="muted">Can't scan? Show the URL</summary>
+      <p class="mono" style="margin-top:8px">{{ short_url }}</p>
+    </details>
+    <div style="margin-top:16px; display:flex; gap:10px">
+      <form method="post" action="{% url 'messages_resend' person.pk %}">
+        {% csrf_token %}
+        <button class="btn secondary" type="submit">Get a new QR</button>
+      </form>
+      <form method="post" action="{% url 'messages_reject' person.pk %}">
+        {% csrf_token %}
+        <button class="btn secondary" type="submit">Cancel</button>
+      </form>
+    </div>
+  </div>
+  <script>
+    setTimeout(() => window.location.reload(), 4000);
+  </script>
+
+{% elif chat_state == "counterparty_scan_waiting" %}
+  <div class="card">
+    <h2>Almost connected <span class="pill wait" style="font-size:12px">waiting</span></h2>
+    <p class="muted" style="margin-top:-4px">
+      <strong>{{ person.full_name }}</strong> accepted and is scanning their own
+      QR now. This page will move on by itself once they finish.
+    </p>
+  </div>
+  <script>
+    setTimeout(() => window.location.reload(), 4000);
+  </script>
+
+{% elif chat_state == "pending_their_decision" %}
   <div class="card">
     <h2>Connection request sent <span class="pill wait" style="font-size:12px">waiting</span></h2>
     <p class="muted" style="margin-top:-4px">
-      <strong>{{ person.full_name }}</strong> needs to open their own Messages page,
-      scan the invitation with their wallet, and confirm it there. There's nothing
-      further to do here until they do.
+      <strong>{{ person.full_name }}</strong> needs to accept or reject your request
+      on their own Messages page. There's nothing further to do here until they do.
     </p>
     <details style="margin-top:12px">
       <summary class="muted">Taking a while? Resend the request</summary>
@@ -117,18 +173,6 @@
   </div>
   <script>
     setTimeout(() => window.location.reload(), 4000);
-  </script>
-
-{% elif chat_state == "connecting" %}
-  <div class="card">
-    <h2>Connecting… <span class="pill wait" style="font-size:12px">almost there</span></h2>
-    <p class="muted" style="margin-top:-4px">
-      Their wallet has sent the connection request and it's being confirmed
-      automatically. This page will move on by itself in a moment.
-    </p>
-  </div>
-  <script>
-    setTimeout(() => window.location.reload(), 3000);
   </script>
 
 {% elif chat_state == "rejected" %}
