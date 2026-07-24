@@ -9,31 +9,6 @@ messaging feature between faculty and students over DIDComm.
 Built with **ACA-Py** (Hyperledger Aries) for every SSI operation and
 **Django** for the web portal. Runs natively on Windows — no Docker, no WSL.
 
-```
-   ┌───────────────┐   1. scan QR    ┌────────────────────┐
-   │ Phone wallet  │◄────────────────│  Django portal     │
-   │  (Bifold)     │                 │  :8000             │
-   │               │  2. present     │                    │
-   │  holds the    │─────proof──────►│  login, dashboard, │
-   │  credential   │                 │  profile, messages │
-   └───────┬───────┘                 └─────────┬──────────┘
-           │                                   │
-           │ DIDComm :8020            Admin API :8021
-           │                          + signed webhooks
-           ▼                                   ▼
-   ┌───────────────┐               ┌────────────────────┐
-   │  Mediator     │               │  ACA-Py agent      │
-   │  :8040/:8042  │               │  issuer + verifier │
-   └───────────────┘               └─────────┬──────────┘
-                                             │ publishes / reads
-                                             ▼
-                                   ┌────────────────────┐
-                                   │ BCovrin test ledger│
-                                   │ DID, schemas,      │
-                                   │ credential defs    │
-                                   └────────────────────┘
-```
-
 The `role` (student/faculty) lives **inside the credential**, signed by the
 university — not in a database column. Presenting the other credential from
 the same wallet changes the entire portal, with no server-side account
@@ -212,24 +187,33 @@ The connect handshake, when Karim (faculty) presses **Connect** on Tanvir
 (student)'s row:
 
 ```
-Karim (faculty)      Django portal        ACA-Py agent       Tanvir (student)
-   │  click Connect       │                     │                     │
-   ├──────────────────────► create invitation    │                     │
-   │                      ├────────────────────►│                     │
-   │  "waiting on them"    │◄──── invitation ────┤                     │
-   │◄──────────────────────┤                     │                     │
-   │                      │                     │◄─ Tanvir opens his ─┤
-   │                      │                     │   own Messages page,│
-   │                      │                     │   scans with HIS    │
-   │                      │                     │   own wallet        │
-   │                      │◄─ webhook: request ──┤◄────────────────────┤
-   │                      │                     │  auto-accept →      │
-   │                      │                     ├─── response ───────►│
-   │                      │◄─ webhook: complete ─┤◄──── complete ──────┤
-   │  "connected"          │                     │      "connected"     │
-   │◄──────────────────────┤─────────────────────┼─────────────────────►│
-   │  type + send            both sides send/receive Basic Messages     │
-   │  ◄───────────────────────────────────────────────────────────────► │
+Karim (faculty)      Django portal          ACA-Py agent           Tanvir (student)
+   │  click Connect       │                       │                       │
+   ├──────────────────────► create invitation      │                       │
+   │                      ├──────────────────────►│                       │
+   │  "waiting on them"    │◄───────── invitation ─┤                       │
+   │◄──────────────────────┤                       │                       │
+   │                      │                       │                       │◄─ opens own
+   │                      │                       │                       │   Messages page,
+   │                      │                       │                       │   sees the QR
+   │                      │                       │◄────────── scan ──────┤   and scans it
+   │                      │                       │                       │   with his own
+   │                      │                       │                       │   wallet app
+   │                      │                       │  wallet shows its own │
+   │                      │                       │  "connect to Demo     │
+   │                      │                       │  University?" prompt  │
+   │                      │                       │◄── he taps Accept, ───┤
+   │                      │                       │    wallet sends DID   │
+   │                      │                       │    Exchange request   │
+   │                      │◄──── webhook: request ─┤                       │
+   │                      │                       │  auto_accept=true →   │
+   │                      │                       ├──────── response ────►│
+   │                      │                       │◄──────── complete ────┤
+   │                      │◄─── webhook: complete ─┤                       │
+   │  "connected"          │                       │       "connected"     │
+   │◄──────────────────────┤───────────────────────┼───────────────────────►│
+   │         both sides send/receive Basic Messages (type + send)          │
+   │  ◄─────────────────────────────────────────────────────────────────►  │
 ```
 
 1. The portal asks ACA-Py for a new out-of-band invitation
