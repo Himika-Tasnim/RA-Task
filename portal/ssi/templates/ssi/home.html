@@ -50,10 +50,7 @@
     <li>ACA-Py verifies the presentation against the credential definition above; the portal then creates a session.</li>
     <li>They browse <strong>Dashboard</strong> and <strong>Profile</strong> with no re-authentication, then log out. What those pages show depends on the role inside the credential.</li>
   </ol>
-  <p class="muted">
-    Same process for everyone &mdash; there's no separate faculty-only way to
-    issue a credential. Whoever the registry says you are is what you get.
-  </p>
+
   <a class="btn" href="{% url 'request_credential' %}">Send a request to issue a credential</a>
   <a class="btn secondary" href="{% url 'login' %}">Log in with a credential</a>
 </div>

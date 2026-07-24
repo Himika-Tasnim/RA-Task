@@ -133,20 +133,18 @@ class AcaPyClient:
         Out-of-band invitation (RFC 0434) for the 1-to-1 messaging feature,
         naming DID Exchange 1.0 (RFC 0023) as its handshake protocol.
 
-        Called twice per chat -- once for whoever presses Connect, once more
-        for whoever presses Accept -- because a DIDComm connection is
-        pairwise: reaching two different phones through this one shared
-        agent means forming two independent connections to it, one per
-        phone, not one connection that somehow serves both people. See
-        `ChatInvitation` for the full shape.
+        Called twice per chat, both times the moment either party presses
+        Connect -- because a DIDComm connection is pairwise: reaching two
+        different phones through this one shared agent means forming two
+        independent connections to it, one per phone, not one connection
+        that somehow serves both people. See `ChatInvitation` for the full
+        shape.
 
         `auto_accept=true`: the wallet apps this project targets (Bifold)
         auto-accept every connection with no accept/decline screen of their
-        own anyway, so there's no wallet-side consent step to defer to.
-        Consent lives entirely on the portal instead -- the counterparty's
-        invitation is simply never created unless they press Accept rather
-        than Reject (`messages_accept` / `messages_reject`), so there's
-        nothing left to gate once an invitation exists to be scanned.
+        own anyway, and there's no accept step on the portal side either --
+        both invitations exist the moment either side clicks Connect, and
+        each is simply scanned whenever its owner gets to it.
         """
         return self.post(
             "/out-of-band/create-invitation",
@@ -164,12 +162,11 @@ class AcaPyClient:
         Remove a connection outright.
 
         Used for `messages_resend` (clear a stale half-open connection
-        before a fresh invitation replaces it), `messages_reject` (discard
-        whichever side's connection already exists when the other party
-        declines), and `messages_disconnect` (either party deliberately
-        ending a working one). There's no protocol message for "goodbye" in
-        DID Exchange itself -- ending a connection is a purely local
-        decision each side makes about its own agent, same as this.
+        before a fresh invitation replaces it) and `messages_disconnect`
+        (either party deliberately ending a working one). There's no
+        protocol message for "goodbye" in DID Exchange itself -- ending a
+        connection is a purely local decision each side makes about its own
+        agent, same as this.
         """
         return self.delete(f"/connections/{connection_id}")
 

@@ -128,14 +128,23 @@ class IssuanceRequest(models.Model):
 
 
 class ChatInvitation(models.Model):
-   
+    """
+    One conversation between one student and one faculty member.
+
+    Only the initiator scans anything: pressing Connect creates a fresh
+    invitation for them alone (see `create_chat_invitation` in acapy.py).
+    The counterparty's side reuses the connection they already formed with
+    the portal when their credential was issued (`IssuanceRequest.connection_id`)
+    -- no separate invitation, no second scan. That connection is durable and
+    shared across every conversation that counterparty is in, so relaying a
+    message natively typed in *their* wallet (outside the portal UI) can't be
+    routed to the right thread and isn't attempted; portal-page messaging on
+    both sides works regardless, since the recipient connection is always
+    known explicitly.
+    """
 
     STATE_AWAITING_SCAN = "awaiting_scan"
-    STATE_REQUESTED = "requested"
-    STATE_COUNTERPARTY_SCAN = "counterparty_scan"
     STATE_CONNECTED = "connected"
-    STATE_REJECTED = "rejected"
-    STATE_CANCELLED = "cancelled"
     STATE_DISCONNECTED = "disconnected"
     STATE_ERROR = "error"
 
@@ -148,12 +157,8 @@ class ChatInvitation(models.Model):
     token = models.CharField(max_length=32, default=short_token, db_index=True)
     connection_id = models.CharField(max_length=120, blank=True, db_index=True)
 
-    # The counterparty's own invitation/connection -- created only once they
-    # press Accept, and only they scan this one.
-    counterparty_invitation_msg_id = models.CharField(max_length=120, blank=True, db_index=True)
-    counterparty_invitation_url = models.TextField(blank=True)
-    counterparty_invitation_json = models.JSONField(default=dict, blank=True)
-    counterparty_token = models.CharField(max_length=32, default=short_token, db_index=True)
+    # The counterparty's connection -- copied from their existing issuance
+    # connection at creation time, never scanned or deleted by this chat.
     counterparty_connection_id = models.CharField(max_length=120, blank=True, db_index=True)
 
     student_id_number = models.CharField(max_length=60, default="", db_index=True)
@@ -172,22 +177,6 @@ class ChatInvitation(models.Model):
     def connection_id_for(self, role: str) -> str:
         """Which connection_id belongs to `role` -- theirs or the counterparty's."""
         return self.connection_id if role == self.initiated_by_role else self.counterparty_connection_id
-
-    def other_role(self) -> str:
-        """The counterparty's role -- whichever role did NOT press Connect."""
-        from django.conf import settings as dj_settings
-
-        return (
-            dj_settings.ROLE_FACULTY
-            if self.initiated_by_role == dj_settings.ROLE_STUDENT
-            else dj_settings.ROLE_STUDENT
-        )
-
-    def role_for_connection(self, connection_id: str) -> str:
-        """Whose connection `connection_id` is -- the initiator's or the counterparty's."""
-        if connection_id and connection_id == self.counterparty_connection_id:
-            return self.other_role()
-        return self.initiated_by_role
 
 
 class LoginSession(models.Model):

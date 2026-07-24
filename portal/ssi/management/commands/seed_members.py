@@ -31,6 +31,7 @@ STUDENTS = [
     {"full_name": "Sabrina Islam", "id_number": "STU-007", "department": "Information Technology", "email": "sabrina@university.edu"},
     {"full_name": "Mahin Chowdhury", "id_number": "STU-008", "department": "Electrical Engineering", "email": "mahin@university.edu"},
     {"full_name": "Tania Sultana", "id_number": "STU-009", "department": "Computer Science", "email": "tania@university.edu"},
+    {"full_name": "Sadika Tasnim", "id_number": "STU-010", "department": "Computer Science", "email": "sadika.tasnim@university.edu"},
 ]
 
 FACULTY = [
@@ -39,6 +40,7 @@ FACULTY = [
     {"full_name": "Nasrin Sultana", "id_number": "FAC-002", "department": "Software Engineering", "email": "nasrin@university.edu"},
     {"full_name": "Mahbub Alam", "id_number": "FAC-003", "department": "Information Technology", "email": "mahbub@university.edu"},
     {"full_name": "Farida Yasmin", "id_number": "FAC-004", "department": "Electrical Engineering", "email": "farida@university.edu"},
+    {"full_name": "Jafrin Iqbal", "id_number": "FAC-005", "department": "Computer Science", "email": "jafrin@university.edu"},
 ]
 
 
