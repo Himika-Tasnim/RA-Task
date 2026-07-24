@@ -686,7 +686,9 @@ def messages_start(request, pk):
     Send a connection request to the selected person.
 
     Blocked while a connection attempt is already in flight or connected;
-    always allowed again once the latest attempt was rejected or errored.
+    always allowed again once the latest attempt was rejected, cancelled, or
+    errored. Use `messages_resend` instead to replace one that's still
+    awaiting_scan/requested but sitting unanswered.
     """
     me = request.session[SESSION_KEY]
     person = _counterparty_or_404(request, pk)
@@ -699,15 +701,19 @@ def messages_start(request, pk):
         return redirect("messages_thread", pk=pk)
 
     try:
-        invitation = AcaPyClient().create_chat_invitation(
-            alias=f"Chat with {person.full_name}"
-        )
+        _send_chat_invitation(me, person)
     except AcaPyError as exc:
         flash.error(request, f"Could not create the connection invitation: {exc}")
         return redirect("messages")
+    return redirect("messages_thread", pk=pk)
+
+
+def _send_chat_invitation(me: dict, person: IssuanceRequest) -> ChatInvitation:
+    """Create a fresh chat invitation + ChatInvitation row for this pair."""
+    invitation = AcaPyClient().create_chat_invitation(alias=f"Chat with {person.full_name}")
 
     my_role = me.get("role", settings.ROLE_STUDENT)
-    ChatInvitation.objects.create(
+    return ChatInvitation.objects.create(
         label=person.full_name,
         invitation_msg_id=invitation.get("invi_msg_id", ""),
         invitation_url=invitation.get("invitation_url", ""),
@@ -716,6 +722,48 @@ def messages_start(request, pk):
         faculty_id_number=person.id_number if my_role == settings.ROLE_STUDENT else me["id_number"],
         initiated_by_role=my_role,
     )
+
+
+@ssi_login_required
+@require_POST
+def messages_resend(request, pk):
+    """
+    The initiator withdraws an unanswered request and sends a fresh one.
+
+    Available while the latest attempt is still awaiting_scan (nobody's
+    scanned it) or requested (scanned but not yet accepted) -- for a wallet
+    that never scanned, lost connectivity, or a request just sitting
+    unanswered too long. Only the person who sent it can resend it; the
+    receiving party accepts or rejects instead (messages_accept/reject).
+    """
+    me = request.session[SESSION_KEY]
+    my_role = me.get("role", settings.ROLE_STUDENT)
+    person = _counterparty_or_404(request, pk)
+    chat = _latest_chat_for_pair(me, person)
+
+    if (
+        not chat
+        or chat.state not in (ChatInvitation.STATE_AWAITING_SCAN, ChatInvitation.STATE_REQUESTED)
+        or chat.initiated_by_role != my_role
+    ):
+        flash.error(request, "There is no outgoing request to resend.")
+        return redirect("messages_thread", pk=pk)
+
+    if chat.connection_id:
+        try:
+            AcaPyClient().delete_connection(chat.connection_id)
+        except AcaPyError:
+            pass  # best effort -- a stale agent-side connection doesn't block a fresh one
+    chat.state = ChatInvitation.STATE_CANCELLED
+    chat.save(update_fields=["state"])
+
+    try:
+        _send_chat_invitation(me, person)
+    except AcaPyError as exc:
+        flash.error(request, f"Could not create a new connection invitation: {exc}")
+        return redirect("messages_thread", pk=pk)
+
+    flash.success(request, f"Sent a new connection request to {person.full_name}.")
     return redirect("messages_thread", pk=pk)
 
 
@@ -936,7 +984,7 @@ def _on_connection(payload: dict) -> None:
 
         chat = (
             ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id)
-            .exclude(state=ChatInvitation.STATE_REJECTED)
+            .exclude(state__in=(ChatInvitation.STATE_REJECTED, ChatInvitation.STATE_CANCELLED))
             .first()
         )
         if chat:
@@ -959,7 +1007,13 @@ def _on_connection(payload: dict) -> None:
     if state in ("error", "abandoned"):
         chat = (
             ChatInvitation.objects.filter(invitation_msg_id=invitation_msg_id)
-            .exclude(state__in=(ChatInvitation.STATE_CONNECTED, ChatInvitation.STATE_REJECTED))
+            .exclude(
+                state__in=(
+                    ChatInvitation.STATE_CONNECTED,
+                    ChatInvitation.STATE_REJECTED,
+                    ChatInvitation.STATE_CANCELLED,
+                )
+            )
             .first()
         )
         if chat:

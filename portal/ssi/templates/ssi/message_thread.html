@@ -85,6 +85,17 @@
       Your wallet connected. <strong>{{ person.full_name }}</strong> now needs to
       accept the request on their end before you can message each other.
     </p>
+    <details style="margin-top:12px">
+      <summary class="muted">Taking a while? Resend the request</summary>
+      <p class="muted" style="margin-top:8px">
+        This withdraws the current request and sends a brand new one — useful
+        if it's been sitting unanswered.
+      </p>
+      <form method="post" action="{% url 'messages_resend' person.pk %}" style="margin-top:6px">
+        {% csrf_token %}
+        <button class="btn secondary" type="submit">Resend request</button>
+      </form>
+    </details>
   </div>
   <script>
     setTimeout(() => window.location.reload(), 4000);
@@ -106,6 +117,10 @@
       <summary class="muted">Can't scan? Show the URL</summary>
       <p class="mono" style="margin-top:8px">{{ short_url }}</p>
     </details>
+    <form method="post" action="{% url 'messages_resend' person.pk %}" style="margin-top:12px">
+      {% csrf_token %}
+      <button class="btn secondary" type="submit">Resend (get a new QR)</button>
+    </form>
   </div>
   <script>
     setTimeout(() => window.location.reload(), 4000);

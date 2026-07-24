@@ -58,6 +58,9 @@ class AcaPyClient:
     def post(self, path: str, json: Optional[Dict] = None, **kw) -> Any:
         return self._request("POST", path, json=json or {}, **kw)
 
+    def delete(self, path: str, **kw) -> Any:
+        return self._request("DELETE", path, **kw)
+
     # -- agent / ledger ----------------------------------------------------
     def status(self) -> Dict:
         return self.get("/status")
@@ -166,6 +169,17 @@ class AcaPyClient:
 
     def reject_connection(self, connection_id: str, reason: str = "") -> Dict:
         return self.post(f"/didexchange/{connection_id}/reject", {"reason": reason})
+
+    def delete_connection(self, connection_id: str) -> Dict:
+        """
+        Remove a connection outright.
+
+        Used when the initiator resends a chat request that's sitting
+        unanswered -- clears the stale half-open connection on the agent
+        side before a fresh invitation is created, so it doesn't linger
+        around uselessly once superseded.
+        """
+        return self.delete(f"/connections/{connection_id}")
 
     # -- issuance ----------------------------------------------------------
     def issue_credential(

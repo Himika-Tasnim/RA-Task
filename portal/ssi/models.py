@@ -189,12 +189,19 @@ class ChatInvitation(models.Model):
     to the initiator's choice of counterparty -- the previous design here --
     made the chat invisible to the other party's own directory, since their
     query looked for their own name, not the initiator's.
+
+    STATE_REJECTED and STATE_CANCELLED are both terminal and both just clear
+    the way for a fresh Connect, but they mean different things: REJECTED is
+    the receiving party saying no; CANCELLED is the initiator giving up on
+    one that's sitting unanswered (wallet never scanned it, or scanned but
+    nobody's accepted yet) and sending a new one instead (`messages_resend`).
     """
 
     STATE_AWAITING_SCAN = "awaiting_scan"
     STATE_REQUESTED = "requested"
     STATE_CONNECTED = "connected"
     STATE_REJECTED = "rejected"
+    STATE_CANCELLED = "cancelled"
     STATE_ERROR = "error"
 
     label = models.CharField(max_length=120, default="Faculty")
