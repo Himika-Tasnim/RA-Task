@@ -75,6 +75,7 @@ class IssuanceRequest(models.Model):
   
     STATE_AWAITING_SCAN = "awaiting_scan"
     STATE_CONNECTED = "connected"
+    STATE_SUBMITTING = "submitting"
     STATE_REJECTED = "rejected"
     STATE_OFFERED = "offered"
     STATE_ISSUED = "issued"
@@ -88,6 +89,7 @@ class IssuanceRequest(models.Model):
     ACTIVE_STATES = (
         STATE_AWAITING_SCAN,
         STATE_CONNECTED,
+        STATE_SUBMITTING,
         STATE_OFFERED,
         STATE_ISSUED,
     )

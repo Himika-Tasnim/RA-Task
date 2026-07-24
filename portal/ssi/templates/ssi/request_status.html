@@ -90,8 +90,6 @@
     <a class="btn" href="{% url 'login' %}">Continue to login</a>
 
   {% else %}
-    <h2>Something went wrong</h2>
-    <span class="pill err">error</span>
     <p class="muted" style="margin-top:14px">{{ req.detail }}</p>
   {% endif %}
 </div>

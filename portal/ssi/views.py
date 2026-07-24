@@ -177,7 +177,8 @@ def home(request):
 
 
 def request_credential(request):
-   
+    already_logged_in_as = request.session.get(SESSION_KEY)
+
     if request.method == "POST":
         if not LedgerArtifacts.any():
             flash.error(
@@ -209,7 +210,11 @@ def request_credential(request):
         )
         return redirect("request_status", token=req.token)
 
-    return render(request, "ssi/request_credential.html")
+    return render(
+        request,
+        "ssi/request_credential.html",
+        {"already_logged_in_as": already_logged_in_as},
+    )
 
 
 def request_status(request, token):
@@ -241,21 +246,42 @@ def request_status_poll(request, token):
 
 @require_POST
 def request_submit_details(request, token):
-    
-    req = get_object_or_404(
-        IssuanceRequest, token=token, state=IssuanceRequest.STATE_CONNECTED
-    )
+    req = get_object_or_404(IssuanceRequest, token=token)
+
+    # Atomic compare-and-swap: this UPDATE only affects a row still sitting
+    # at CONNECTED, and its WHERE clause is evaluated against whatever's
+    # actually committed at the moment it runs. A double-tap or a page
+    # refresh reposting the form fires this twice; whichever request's
+    # UPDATE lands first flips the state and "claims" the request, so the
+    # second one sees claimed == 0 and bails out below instead of both
+    # racing to call AcaPy's issue_credential for the same connection.
+    claimed = IssuanceRequest.objects.filter(
+        pk=req.pk, state=IssuanceRequest.STATE_CONNECTED
+    ).update(state=IssuanceRequest.STATE_SUBMITTING, detail="Processing your details...")
+    if not claimed:
+        flash.info(request, "That request was already submitted.")
+        return redirect("request_status", token=token)
 
     submitted = {
         k: request.POST.get(k, "").strip()
         for k in ("full_name", "id_number", "department", "email")
     }
+    def _reopen_for_retry(detail: str) -> None:
+        # These failures are the applicant's to fix (typo, transient setup
+        # gap) -- put the row back to CONNECTED so a corrected resubmit can
+        # claim it again, instead of leaving it stuck at SUBMITTING forever.
+        IssuanceRequest.objects.filter(pk=req.pk).update(
+            state=IssuanceRequest.STATE_CONNECTED, detail=detail
+        )
+
     if not all(submitted.values()):
+        _reopen_for_retry("Waiting for your wallet to scan and connect.")
         flash.error(request, "Please fill in every field.")
         return redirect("request_status", token=token)
 
     record = MemberRecord.find_match(submitted)
     if record is None:
+        _reopen_for_retry("Waiting for your wallet to scan and connect.")
         flash.error(
             request,
             "Those details don't match an unissued record we have on file. "
@@ -272,6 +298,7 @@ def request_submit_details(request, token):
 
     artifacts = LedgerArtifacts.for_role(record.role)
     if not artifacts:
+        _reopen_for_retry("Waiting for your wallet to scan and connect.")
         flash.error(
             request,
             f"No credential definition published for role '{record.role}'. Try again shortly.",
