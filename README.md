@@ -172,9 +172,3 @@ URL into the wallet app's `.env` file.
 - `lanip.py` — LAN address detection shared by agent and portal
 - `run.py` — combined startup script
 
-## More documentation
-
-- [SETUP_GUIDE.md](SETUP_GUIDE.md) — complete Windows build and trap log
-- [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — design, security, and behavior details
-- [LEARN_SSI.md](LEARN_SSI.md) — SSI concepts and architecture
-- [MESSAGING_PROTOCOL.md](MESSAGING_PROTOCOL.md) — chat protocol and DIDComm details
