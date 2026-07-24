@@ -468,9 +468,14 @@ With the project running, prove each storage claim to yourself.
 
 **The ledger holds only public references (open in a browser):**
 ```
-http://test.bcovrin.vonx.io/browse/domain?page=1&query=WazjcnK7xmg2BwiGzStH1S
+https://indyscan.bcovrin.vonx.io
 ```
-You will see DIDs, schemas and cred-defs — and no student names.
+BCovrin's own built-in `/browse/domain` page has since been retired — this
+is the ledger explorer it now links to instead ("Ledger Browser" link on
+[test.bcovrin.vonx.io](https://test.bcovrin.vonx.io)). Search or filter for
+your issuer DID (printed by `register_did.py`, e.g.
+`WazjcnK7xmg2BwiGzStH1S`) and you will see DIDs, schemas and cred-defs —
+and no student names.
 
 **The wallet holds the real credential (with the agents running):**
 ```powershell
