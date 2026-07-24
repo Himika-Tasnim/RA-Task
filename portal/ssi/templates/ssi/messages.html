@@ -4,9 +4,10 @@
 {% block content %}
 <h1>Secure messages</h1>
 <p class="sub">
-  Pick someone to message. Connecting is a direct DIDComm request: you scan
-  their invitation from your wallet, and they have to accept it before any
-  messages can flow — reject it and nothing is ever exchanged.
+  Pick someone to message. Press Connect and it's THEIR wallet that scans
+  and confirms the connection — the same "connect to Demo University?"
+  prompt your own wallet shows you for any invitation. Nothing is
+  connected, and no messages can flow, until they do that.
 </p>
 
 <div class="card">
@@ -26,18 +27,18 @@
               <span class="pill ok">connected</span>
               <a class="btn" style="margin:0 0 0 10px; padding:7px 14px"
                  href="{% url 'messages_thread' entry.person.pk %}">Message</a>
-            {% elif entry.awaiting_my_decision %}
+            {% elif entry.needs_my_scan %}
               <span class="pill wait">wants to connect</span>
               <a class="btn" style="margin:0 0 0 10px; padding:7px 14px"
-                 href="{% url 'messages_thread' entry.person.pk %}">Review request</a>
-            {% elif entry.pending_their_decision %}
-              <span class="pill wait">awaiting their consent</span>
+                 href="{% url 'messages_thread' entry.person.pk %}">Scan to connect</a>
+            {% elif entry.connecting %}
+              <span class="pill wait">connecting…</span>
               <a class="btn secondary" style="margin:0 0 0 10px; padding:7px 14px"
                  href="{% url 'messages_thread' entry.person.pk %}">View status</a>
-            {% elif entry.awaiting_scan %}
-              <span class="pill wait">waiting for scan</span>
+            {% elif entry.waiting_on_them %}
+              <span class="pill wait">waiting for them to scan</span>
               <a class="btn secondary" style="margin:0 0 0 10px; padding:7px 14px"
-                 href="{% url 'messages_thread' entry.person.pk %}">View QR</a>
+                 href="{% url 'messages_thread' entry.person.pk %}">View status</a>
             {% else %}
               <span class="pill err">not connected</span>
               <form method="post" action="{% url 'messages_start' entry.person.pk %}"
@@ -65,9 +66,9 @@
 <div class="card">
   <h2>How this works</h2>
   <ol class="steps">
-    <li>Press <strong>Connect</strong> and scan the invitation QR with your wallet — that sends a DIDComm connection request.</li>
-    <li>The other person sees <strong>Review request</strong> on their own Messages page and chooses to accept or reject it.</li>
-    <li>Only once they accept does a trusted connection exist, and messages can flow — either side can decline instead, and nothing is connected.</li>
+    <li>Press <strong>Connect</strong> — this sends them an invitation, it does not connect anything yet.</li>
+    <li>They open their own Messages page and scan the QR shown there with their wallet. Their wallet asks them to confirm the connection before it sends anything — that's the actual consent step, not a button on this website.</li>
+    <li>Once their wallet confirms, a real DIDComm connection exists and messages can flow both ways. Either side can end it later from the conversation.</li>
   </ol>
 </div>
 {% endblock %}

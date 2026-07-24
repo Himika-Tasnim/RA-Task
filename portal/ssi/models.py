@@ -172,29 +172,40 @@ class IssuanceRequest(models.Model):
 class ChatInvitation(models.Model):
     """
     One connection attempt between one student and one faculty member, for
-    the messaging bonus feature.
+    the messaging bonus feature -- a real DID Exchange (RFC 0023) handshake,
+    not just a database flag.
 
     Either side can press Connect first -- `initiated_by_role` records who
-    did, and the OTHER role is the one who gets to accept or reject, so
-    messaging only ever starts with the receiving party's consent. The
-    invitation is single-use: the connection it produces belongs to whoever
-    actually scans it, which is the whole reason `auto_accept` is off (see
-    AcaPyClient.create_chat_invitation) -- without a manual accept step
-    there is no moment for the other party to say no.
+    did. The invitation is then shown to the OTHER party, who scans it with
+    their OWN wallet. That scan is where consent actually lives: the wallet
+    itself (not this app) is what prompts "connect to Demo University?"
+    before it ever sends a request, and declining there means our agent
+    never receives one. This app's own Reject button (see `messages_reject`)
+    covers the same decision made from the portal instead of the wallet.
+
+    This also matters for a reason beyond consent: whoever's wallet actually
+    scans is the one whose device the resulting connection_id reaches. If
+    the initiator scanned their own invitation instead (the previous design
+    here), the connection would run to the initiator's OWN wallet -- useless
+    for reaching the other party once they're on a genuinely separate phone.
 
     `student_id_number` + `faculty_id_number` identify the pair regardless
     of who initiated, so both people's directory queries find the same row
     (messaging is strictly one student <-> one faculty member, enforced by
-    `_counterparty_or_404`). A plain "who is this chat with" label keyed only
-    to the initiator's choice of counterparty -- the previous design here --
-    made the chat invisible to the other party's own directory, since their
-    query looked for their own name, not the initiator's.
+    `_counterparty_or_404`).
 
-    STATE_REJECTED and STATE_CANCELLED are both terminal and both just clear
-    the way for a fresh Connect, but they mean different things: REJECTED is
-    the receiving party saying no; CANCELLED is the initiator giving up on
-    one that's sitting unanswered (wallet never scanned it, or scanned but
-    nobody's accepted yet) and sending a new one instead (`messages_resend`).
+    States, in order: AWAITING_SCAN (invitation created, nobody's scanned
+    it) -> REQUESTED (their wallet scanned it and sent a DID Exchange
+    request -- RFC 0023 calls this "request-received"; auto_accept=true
+    means our agent answers automatically, so this is normally momentary)
+    -> CONNECTED (response sent and acknowledged -- a real, usable DIDComm
+    connection). REJECTED/CANCELLED/DISCONNECTED/ERROR are all terminal and
+    all equally clear the way for a fresh Connect, but mean different
+    things: REJECTED is the other party explicitly declining (via this app,
+    without ever scanning); CANCELLED is the sender giving up on one sitting
+    unanswered and sending a new one instead (`messages_resend`);
+    DISCONNECTED is either party deliberately ending a working connection
+    (`messages_disconnect`); ERROR is the protocol itself failing.
     """
 
     STATE_AWAITING_SCAN = "awaiting_scan"
@@ -202,6 +213,7 @@ class ChatInvitation(models.Model):
     STATE_CONNECTED = "connected"
     STATE_REJECTED = "rejected"
     STATE_CANCELLED = "cancelled"
+    STATE_DISCONNECTED = "disconnected"
     STATE_ERROR = "error"
 
     label = models.CharField(max_length=120, default="Faculty")

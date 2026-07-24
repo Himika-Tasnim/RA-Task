@@ -139,18 +139,16 @@ class AcaPyClient:
 
     def create_chat_invitation(self, alias: str) -> Dict:
         """
-        Out-of-band invitation for the 1-to-1 messaging feature.
+        Out-of-band invitation (RFC 0434) for the 1-to-1 messaging feature,
+        naming DID Exchange 1.0 (RFC 0023) as its handshake protocol.
 
-        Unlike `create_connection_invitation` above, this leaves the
-        resulting connection sitting in "request received" rather than
-        completing it automatically: messaging is meant to require the
-        invitation owner's explicit accept/reject (see
-        `accept_connection_request` / `reject_connection`), not just
-        whoever's wallet happens to scan the QR. `auto_accept=false` here
-        overrides the agent's own --auto-accept-requests default for this
-        one connection -- ACA-Py resolves per-invitation auto_accept ahead of
-        the global setting, so this reliably forces the manual step even
-        though issuance/login invitations on the same agent auto-accept.
+        `auto_accept=true` here is deliberate: consent for this feature
+        lives in the OTHER party's wallet choosing to scan this and send a
+        DID Exchange request at all (see ChatInvitation's docstring) -- once
+        that request arrives there is nothing left for our side to decide,
+        so completing it automatically just carries out a choice the wallet
+        already made. An explicit portal-side decline before scanning is
+        still available (`messages_reject`).
         """
         return self.post(
             "/out-of-band/create-invitation",
@@ -160,24 +158,23 @@ class AcaPyClient:
                 "use_public_did": False,
                 "my_label": "Demo University Portal",
             },
-            params={"auto_accept": "false"},
+            params={"auto_accept": "true"},
         )
 
-    def accept_connection_request(self, connection_id: str) -> Dict:
-        """Manually complete a chat connection left pending by auto_accept=false."""
-        return self.post(f"/didexchange/{connection_id}/accept-request")
-
     def reject_connection(self, connection_id: str, reason: str = "") -> Dict:
+        """Abandon a connection that already has a request-received record."""
         return self.post(f"/didexchange/{connection_id}/reject", {"reason": reason})
 
     def delete_connection(self, connection_id: str) -> Dict:
         """
         Remove a connection outright.
 
-        Used when the initiator resends a chat request that's sitting
-        unanswered -- clears the stale half-open connection on the agent
-        side before a fresh invitation is created, so it doesn't linger
-        around uselessly once superseded.
+        Used both for `messages_resend` (clear a stale half-open connection
+        before a fresh invitation replaces it) and `messages_disconnect`
+        (either party deliberately ending a working one). There's no
+        protocol message for "goodbye" in DID Exchange itself -- ending a
+        connection is a purely local decision each side makes about its own
+        agent, same as this.
         """
         return self.delete(f"/connections/{connection_id}")
 

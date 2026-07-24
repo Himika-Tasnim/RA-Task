@@ -36,6 +36,14 @@
              autocomplete="off" required>
       <button class="btn" type="submit">Send</button>
     </form>
+
+    <form method="post" action="{% url 'messages_disconnect' person.pk %}" style="margin-top:14px">
+      {% csrf_token %}
+      <button class="btn secondary" type="submit"
+              onclick="return confirm('End this connection with {{ person.full_name }}? You can reconnect afterwards, but the current conversation will need a fresh connection.');">
+        Disconnect
+      </button>
+    </form>
   </div>
 
   <script>
@@ -46,6 +54,7 @@
       try {
         const res  = await fetch("{% url 'messages_status' person.pk %}");
         const data = await res.json();
+        if (data.state !== "connected") { window.location.reload(); return; }
         if (data.message_count > known) { window.location.reload(); return; }
       } catch (e) { /* keep trying */ }
       setTimeout(pollMessages, 3000);
@@ -55,22 +64,30 @@
     if (t) t.scrollTop = t.scrollHeight;
   </script>
 
-{% elif chat_state == "awaiting_my_decision" %}
+{% elif chat_state == "needs_my_scan" %}
   <div class="card">
-    <h2>Connection request <span class="pill wait" style="font-size:12px">awaiting your decision</span></h2>
+    <h2>{{ person.full_name }} wants to connect <span class="pill wait" style="font-size:12px">scan to accept</span></h2>
     <p class="muted" style="margin-top:-4px">
-      <strong>{{ person.full_name }}</strong> scanned an invitation and is asking to
-      connect with you. Accepting forms a trusted DIDComm connection and lets you
-      message each other; rejecting leaves nothing connected.
+      Scan this with <strong>your own wallet</strong>. Your wallet will ask you to
+      confirm the connection before it sends anything — that confirmation is what
+      actually accepts this request. Nothing is connected until you do that.
     </p>
+    <div class="qr">
+      <img src="{{ qr }}" alt="Chat invitation QR code">
+      <div class="muted" style="margin-top:10px">waiting for your wallet to scan…</div>
+    </div>
+    <details style="margin-top:12px">
+      <summary class="muted">Can't scan? Show the URL</summary>
+      <p class="mono" style="margin-top:8px">{{ short_url }}</p>
+    </details>
     <div style="margin-top:16px; display:flex; gap:10px">
-      <form method="post" action="{% url 'messages_accept' person.pk %}">
-        {% csrf_token %}
-        <button class="btn" type="submit">Accept</button>
-      </form>
       <form method="post" action="{% url 'messages_reject' person.pk %}">
         {% csrf_token %}
-        <button class="btn secondary" type="submit">Reject</button>
+        <button class="btn secondary" type="submit">Decline without scanning</button>
+      </form>
+      <form method="post" action="{% url 'messages_resend' person.pk %}">
+        {% csrf_token %}
+        <button class="btn secondary" type="submit">Get a new QR</button>
       </form>
     </div>
   </div>
@@ -78,12 +95,13 @@
     setTimeout(() => window.location.reload(), 4000);
   </script>
 
-{% elif chat_state == "pending_their_decision" %}
+{% elif chat_state == "waiting_on_them" %}
   <div class="card">
     <h2>Connection request sent <span class="pill wait" style="font-size:12px">waiting</span></h2>
     <p class="muted" style="margin-top:-4px">
-      Your wallet connected. <strong>{{ person.full_name }}</strong> now needs to
-      accept the request on their end before you can message each other.
+      <strong>{{ person.full_name }}</strong> needs to open their own Messages page,
+      scan the invitation with their wallet, and confirm it there. There's nothing
+      further to do here until they do.
     </p>
     <details style="margin-top:12px">
       <summary class="muted">Taking a while? Resend the request</summary>
@@ -101,29 +119,16 @@
     setTimeout(() => window.location.reload(), 4000);
   </script>
 
-{% elif chat_state == "awaiting_scan" %}
+{% elif chat_state == "connecting" %}
   <div class="card">
-    <h2>Connect with {{ person.full_name }}</h2>
+    <h2>Connecting… <span class="pill wait" style="font-size:12px">almost there</span></h2>
     <p class="muted" style="margin-top:-4px">
-      Scan this invitation with your wallet to send a connection request to
-      <strong>{{ person.full_name }}</strong>. They'll need to accept it before
-      you can message each other.
+      Their wallet has sent the connection request and it's being confirmed
+      automatically. This page will move on by itself in a moment.
     </p>
-    <div class="qr">
-      <img src="{{ qr }}" alt="Chat invitation QR code">
-      <div class="muted" style="margin-top:10px">waiting for your wallet to scan…</div>
-    </div>
-    <details style="margin-top:12px">
-      <summary class="muted">Can't scan? Show the URL</summary>
-      <p class="mono" style="margin-top:8px">{{ short_url }}</p>
-    </details>
-    <form method="post" action="{% url 'messages_resend' person.pk %}" style="margin-top:12px">
-      {% csrf_token %}
-      <button class="btn secondary" type="submit">Resend (get a new QR)</button>
-    </form>
   </div>
   <script>
-    setTimeout(() => window.location.reload(), 4000);
+    setTimeout(() => window.location.reload(), 3000);
   </script>
 
 {% elif chat_state == "rejected" %}
@@ -132,6 +137,19 @@
     <p class="muted" style="margin-top:-4px">
       The last connection request between you and <strong>{{ person.full_name }}</strong>
       was declined. You can send a new one.
+    </p>
+    <form method="post" action="{% url 'messages_start' person.pk %}" style="margin-top:12px">
+      {% csrf_token %}
+      <button class="btn" type="submit">Connect again</button>
+    </form>
+  </div>
+
+{% elif chat_state == "disconnected" %}
+  <div class="card">
+    <h2>Disconnected</h2>
+    <p class="muted" style="margin-top:-4px">
+      You're no longer connected with <strong>{{ person.full_name }}</strong>.
+      Connect again to start a new conversation.
     </p>
     <form method="post" action="{% url 'messages_start' person.pk %}" style="margin-top:12px">
       {% csrf_token %}
