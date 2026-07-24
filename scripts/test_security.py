@@ -288,13 +288,7 @@ def _forged_webhook_body(pres_ex_id: str) -> dict:
 
 
 def test_webhook_forgery():
-    """
-    The webhook endpoint is a write path into login state.
-
-    Before this was fixed it was unauthenticated, and pres_ex_id is printed
-    into the public login page -- so anyone who could reach the portal could
-    POST a fabricated "verified" event and log straight in as a faculty member.
-    """
+    
     section(6, "Forged ACA-Py webhook (authentication bypass)")
     s = requests.Session()
     page = s.get(f"{PORTAL}/login/", timeout=20)
