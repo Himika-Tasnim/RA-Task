@@ -466,16 +466,36 @@ form.
 
 With the project running, prove each storage claim to yourself.
 
-**The ledger holds only public references (open in a browser):**
+**The ledger holds only public references — ask the agent, which asks the
+ledger directly (most reliable — with the agent running):**
+```powershell
+# The issuer DID's public verkey, straight from the ledger:
+curl.exe -s -H "X-API-KEY: demo-admin-api-key" "http://127.0.0.1:8021/ledger/did-verkey?did=WazjcnK7xmg2BwiGzStH1S"
+
+# Every schema this DID has published:
+curl.exe -s -H "X-API-KEY: demo-admin-api-key" "http://127.0.0.1:8021/schemas/created?schema_issuer_did=WazjcnK7xmg2BwiGzStH1S"
+
+# Every credential definition this DID has published:
+curl.exe -s -H "X-API-KEY: demo-admin-api-key" "http://127.0.0.1:8021/credential-definitions/created?issuer_did=WazjcnK7xmg2BwiGzStH1S"
+```
+Swap in your own issuer DID (printed by `register_did.py`, and on the
+portal's `/` page) if it differs from the example above. These hit ACA-Py's
+admin API on port 8021, which reads the ledger live — no third-party site
+involved, so nothing to go stale or move.
+
+**Or browse it visually, in a browser (secondary — a public, third-party
+tool, so it can be slower or lag behind a just-published transaction):**
 ```
 https://indyscan.bcovrin.vonx.io
 ```
-BCovrin's own built-in `/browse/domain` page has since been retired — this
-is the ledger explorer it now links to instead ("Ledger Browser" link on
-[test.bcovrin.vonx.io](https://test.bcovrin.vonx.io)). Search or filter for
-your issuer DID (printed by `register_did.py`, e.g.
-`WazjcnK7xmg2BwiGzStH1S`) and you will see DIDs, schemas and cred-defs —
-and no student names.
+This is what BCovrin's own site now links to as its "Ledger Browser" (its
+old built-in `/browse/domain` page was retired). It's a click-through
+transaction explorer, not a URL-based search — a `?query=` parameter on it
+does nothing. Open it, pick the **BCOVRIN_TEST** network, then the
+**Domain** ledger, and look for `NYM`/`SCHEMA`/`CLAIM_DEF` transactions
+from your issuer DID. If your DID doesn't show up there, that's the
+explorer's own indexing lag, not proof the DID isn't really registered —
+trust the `did-verkey` command above over this.
 
 **The wallet holds the real credential (with the agents running):**
 ```powershell
