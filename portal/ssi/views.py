@@ -43,14 +43,7 @@ SESSION_KEY = "member"
 # helpers
 # ---------------------------------------------------------------------------
 def qr_data_uri(text: str) -> str:
-    """
-    Render `text` as a QR code PNG embedded directly in the page.
-
-    Error correction is set to L deliberately. Out-of-band invitations that
-    carry a proof request run to ~1.8 KB, and at the default (M) that either
-    overflows QR capacity outright or produces a grid so dense a phone camera
-    can't lock onto it. L buys the extra capacity and a lower version number.
-    """
+    
     qr = qrcode.QRCode(
         error_correction=qrcode.constants.ERROR_CORRECT_L,
         box_size=8,
@@ -65,14 +58,7 @@ def qr_data_uri(text: str) -> str:
 
 
 def short_invitation_url(token: str) -> str:
-    """
-    A tiny URL that resolves to the invitation.
-
-    Per the out-of-band spec a wallet may scan a plain URL and GET the
-    invitation from it. That turns a ~1.8 KB version-31 QR into a ~45 byte
-    version-3 one, which scans instantly. Wallets that don't implement URL
-    shortening can still use the full `oob=` QR we render alongside it.
-    """
+   
     return f"{settings.PORTAL_PUBLIC_BASE}/i/{token}/"
 
 
@@ -266,9 +252,7 @@ def request_submit_details(request, token):
         for k in ("full_name", "id_number", "department", "email")
     }
     def _reopen_for_retry(detail: str) -> None:
-        # These failures are the applicant's to fix (typo, transient setup
-        # gap) -- put the row back to CONNECTED so a corrected resubmit can
-        # claim it again, instead of leaving it stuck at SUBMITTING forever.
+        
         IssuanceRequest.objects.filter(pk=req.pk).update(
             state=IssuanceRequest.STATE_CONNECTED, detail=detail
         )
@@ -304,9 +288,7 @@ def request_submit_details(request, token):
         )
         return redirect("request_status", token=token)
 
-    # Use the record's own values, not the applicant's raw input, so the
-    # credential always carries what's on file regardless of stray casing or
-    # whitespace in what they typed.
+
     req.full_name = record.full_name
     req.id_number = record.id_number
     req.department = record.department
@@ -420,9 +402,7 @@ def login_complete(request, pres_ex_id):
         flash.error(request, "That presentation was not verified. Please try again.")
         return redirect("login")
 
-    # Only the browser that asked for this proof may complete it. pres_ex_id is
-    # visible in the public login page, so without this anyone who saw it could
-    # claim the session once the real holder presented.
+    
     if session.browser_key and session.browser_key != request.session.session_key:
         log.warning("login_complete from a different browser for %s", pres_ex_id)
         flash.error(request, "This login request belongs to a different browser.")
@@ -602,11 +582,7 @@ def messages_start(request, pk):
 
 
 def _create_chat(me: dict, person: IssuanceRequest) -> ChatInvitation:
-    """
-    Create the initiator's own invitation to scan. The counterparty's side
-    reuses the connection already formed when they received their credential
-    -- no invitation, no scan, connected the moment the initiator's side is.
-    """
+    
     invitation = AcaPyClient().create_chat_invitation(alias=f"Chat with {person.full_name}")
     my_role = me.get("role", settings.ROLE_STUDENT)
 
@@ -883,17 +859,7 @@ def _on_presentation(payload: dict) -> None:
 
 
 def _on_basic_message(payload: dict) -> None:
-    """
-    Relays a message typed natively in the initiator's own wallet (not the
-    portal page). Only ever matched on `connection_id` -- the initiator's
-    dedicated, unambiguous connection. `counterparty_connection_id` is
-    deliberately never matched here: it's the counterparty's durable
-    issuance connection, shared across every conversation they're in, so a
-    message arriving on it can't be attributed to any one chat. Their
-    replies work fine through the portal page (`messages_send`), which
-    already knows the destination explicitly; only their wallet-native
-    typing goes unhandled.
-    """
+ 
     connection_id = payload.get("connection_id")
     content = payload.get("content")
     if not connection_id or not content:

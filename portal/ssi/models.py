@@ -128,20 +128,7 @@ class IssuanceRequest(models.Model):
 
 
 class ChatInvitation(models.Model):
-    """
-    One conversation between one student and one faculty member.
-
-    Only the initiator scans anything: pressing Connect creates a fresh
-    invitation for them alone (see `create_chat_invitation` in acapy.py).
-    The counterparty's side reuses the connection they already formed with
-    the portal when their credential was issued (`IssuanceRequest.connection_id`)
-    -- no separate invitation, no second scan. That connection is durable and
-    shared across every conversation that counterparty is in, so relaying a
-    message natively typed in *their* wallet (outside the portal UI) can't be
-    routed to the right thread and isn't attempted; portal-page messaging on
-    both sides works regardless, since the recipient connection is always
-    known explicitly.
-    """
+    
 
     STATE_AWAITING_SCAN = "awaiting_scan"
     STATE_CONNECTED = "connected"
@@ -180,13 +167,8 @@ class ChatInvitation(models.Model):
 
 
 class LoginSession(models.Model):
-    """
-    One attempted login via proof presentation.
-
-    The browser polls this row while the student presents their credential in
-    the wallet. Only when ACA-Py reports the presentation as cryptographically
-    verified do we let the view create a Django session.
-    """
+    
+  
 
     STATE_PENDING = "pending"
     STATE_VERIFIED = "verified"
